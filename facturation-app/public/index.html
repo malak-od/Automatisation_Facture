@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Facturation Transporteurs</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --muted:#64748b; --line:#334155; --fg:#e2e8f0;
+          --accent:#38bdf8; --ok:#22c55e; --warn:#f59e0b; --plan:#475569; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:16px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:17px; margin:0; font-weight:600; }
+  header .sub { color:var(--muted); font-size:13px; }
+  .layout { display:grid; grid-template-columns:300px 1fr; min-height:calc(100vh - 57px); }
+  aside { border-right:1px solid var(--line); padding:14px; overflow:auto; }
+  aside h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:6px 6px 10px; }
+  .carrier { display:flex; align-items:center; gap:8px; padding:9px 10px; border-radius:8px; cursor:pointer; margin-bottom:3px; }
+  .carrier:hover { background:#0b1222; }
+  .carrier.active { background:#0b3b52; outline:1px solid var(--accent); }
+  .carrier .name { flex:1; }
+  .badge { font-size:10px; padding:2px 7px; border-radius:999px; font-weight:600; }
+  .badge.ready { background:rgba(34,197,94,.15); color:var(--ok); }
+  .badge.planned { background:rgba(71,85,105,.35); color:#94a3b8; }
+  .badge.viti { background:rgba(56,189,248,.15); color:var(--accent); }
+  main { padding:24px 28px; overflow:auto; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin-bottom:16px; }
+  .card h3 { margin:0 0 6px; font-size:16px; }
+  .method { color:#cbd5e1; }
+  .kv { color:var(--muted); font-size:13px; margin-top:6px; }
+  .kv b { color:#cbd5e1; font-weight:600; }
+  .drop { border:1.5px dashed var(--line); border-radius:10px; padding:14px; margin:10px 0; }
+  .drop label { display:block; font-weight:600; margin-bottom:6px; }
+  .drop input { width:100%; color:var(--muted); }
+  .drop .req { color:var(--warn); }
+  button.go { background:var(--accent); color:#04283a; border:0; padding:11px 20px; border-radius:9px; font-weight:700; cursor:pointer; font-size:14px; }
+  button.go:disabled { opacity:.5; cursor:not-allowed; }
+  .plan-note { color:var(--warn); background:rgba(245,158,11,.08); border:1px solid rgba(245,158,11,.25); border-radius:10px; padding:12px 14px; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  td,th { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; }
+  td.n { text-align:right; font-variant-numeric:tabular-nums; }
+  .total { font-size:22px; font-weight:700; color:var(--ok); }
+  .dl a { display:inline-block; margin-right:10px; margin-top:8px; background:#0b1222; border:1px solid var(--line);
+          color:var(--fg); padding:9px 14px; border-radius:8px; text-decoration:none; }
+  .dl a:hover { border-color:var(--accent); }
+  .alerts { max-height:220px; overflow:auto; font-size:12.5px; color:#fbbf24; margin-top:8px; }
+  .alerts div { padding:2px 0; }
+  .spinner { color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🚚 Facturation Transporteurs</h1>
+  <span class="sub">Automatisation multi-transporteurs — Kuehne opérationnel, autres planifiés</span>
+</header>
+<div class="layout">
+  <aside>
+    <h2>Transporteurs</h2>
+    <div id="list"></div>
+  </aside>
+  <main id="main"><p class="spinner">Chargement…</p></main>
+</div>
+
+<script>
+let CARRIERS = [], current = null;
+
+async function load() {
+  CARRIERS = await (await fetch('/api/carriers')).json();
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  // prêts d'abord, puis planifiés
+  CARRIERS.sort((a,b)=> (a.status==='ready'?0:1)-(b.status==='ready'?0:1) || a.name.localeCompare(b.name));
+  for (const c of CARRIERS) {
+    const el = document.createElement('div');
+    el.className = 'carrier';
+    el.innerHTML = `<span class="name">${c.name}</span>
+      ${c.viticolis?'<span class="badge viti">Viticolis</span>':''}
+      <span class="badge ${c.status}">${c.status==='ready'?'prêt':'à venir'}</span>`;
+    el.onclick = () => select(c.id, el);
+    list.appendChild(el);
+  }
+  const first = CARRIERS.find(c=>c.status==='ready') || CARRIERS[0];
+  const idx = CARRIERS.indexOf(first);
+  select(first.id, list.children[idx]);
+}
+
+function select(id, el) {
+  current = CARRIERS.find(c=>c.id===id);
+  document.querySelectorAll('.carrier').forEach(n=>n.classList.remove('active'));
+  if (el) el.classList.add('active');
+  render();
+}
+
+function render() {
+  const c = current, m = document.getElementById('main');
+  let html = `<div class="card"><h3>${c.name}</h3>
+    <div class="method">${c.method||''}</div>
+    <div class="kv"><b>Taxe gasoil :</b> ${c.taxeGasoil||'—'}</div></div>`;
+
+  if (c.status !== 'ready') {
+    html += `<div class="card"><div class="plan-note">⏳ Transporteur <b>planifié</b> — méthode connue, implémentation à venir.
+      Documents attendus : ${(c.inputs||[]).map(i=>i.label).join(', ')||'à définir'}.</div></div>`;
+    m.innerHTML = html; return;
+  }
+
+  html += `<div class="card"><h3>1. Déposer les documents fournis par ${c.name}</h3><form id="form">`;
+  for (const inp of c.inputs) {
+    html += `<div class="drop"><label>${inp.label} ${inp.required?'<span class="req">*</span>':''}</label>
+      <input type="file" name="${inp.key}" accept="${inp.accept}" ${inp.multiple?'multiple':''} ${inp.required?'required':''}></div>`;
+  }
+  html += `<button class="go" type="submit">Générer l'import + le classeur</button></form></div>
+    <div id="result"></div>`;
+  m.innerHTML = html;
+  document.getElementById('form').onsubmit = run;
+}
+
+async function run(e) {
+  e.preventDefault();
+  const btn = e.target.querySelector('button');
+  btn.disabled = true; btn.textContent = 'Traitement…';
+  const fd = new FormData(e.target);
+  fd.append('carrier', current.id);
+  const r = document.getElementById('result');
+  r.innerHTML = '<p class="spinner">Calcul en cours…</p>';
+  try {
+    const res = await fetch('/api/process', { method:'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Erreur');
+    renderResult(data);
+  } catch (err) {
+    r.innerHTML = `<div class="card"><div class="plan-note">❌ ${err.message}</div></div>`;
+  } finally { btn.disabled = false; btn.textContent = "Générer l'import + le classeur"; }
+}
+
+function renderResult(d) {
+  const totaux = d.totaux || {};
+  const hasTotals = Object.keys(totaux).length > 0;
+  const rows = Object.entries(totaux).map(([k,v])=>`<tr><td>${k}</td><td class="n">${v.toFixed(2)}</td></tr>`).join('');
+  const icons = { workbook: '📊', xlsx: '📥', csv: '📄' };
+  const fileItems = Object.entries(d.downloads || {}).map(([k,x])=>`<li>${icons[k]||'📄'} ${x.name}</li>`).join('');
+  document.getElementById('result').innerHTML = `
+    <div class="card"><h3>2. Résultat — ${d.lignes} lignes</h3>
+      ${hasTotals ? `<div class="total">${d.totalHt.toFixed(2)} € HT</div>
+      <table><thead><tr><th>Poste</th><th style="text-align:right">Montant €</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
+      <div class="kv" style="margin-top:12px"><b>${d.alerts.length} alerte(s) à vérifier</b>${(d.infos||[]).length?` · ${d.infos.length} info(s) (normal)`:''}</div>
+      ${d.alerts.length?`<div class="alerts">${d.alerts.map(a=>`<div>⚠️ ${a}</div>`).join('')}</div>`:''}
+      ${(d.infos||[]).length?`<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">ℹ️ ${d.infos.length} ligne(s) affrètement/navette — zone volontairement vide (hors grille tarifaire)</summary><div class="alerts" style="color:#7dd3fc">${d.infos.map(a=>`<div>${a}</div>`).join('')}</div></details>`:''}
+    </div>
+    <div class="card"><h3>3. Fichiers générés${d.periode ? ' — période ' + d.periode : ''}</h3>
+      ${d.classeurClone ? '<div class="kv" style="color:#7dd3fc">📊 Classeur = <b>copie fidèle</b> du fichier fait à la main (feuilles, formules, pivots, mise en forme)</div>' : '<div class="kv">📊 Classeur en version simplifiée (Excel non disponible)</div>'}
+      <div class="kv" style="margin-top:8px">✅ Enregistrés dans le dossier <b>outputs\\${d.stamp}\\</b> :</div>
+      <ul style="margin:6px 0 14px 20px;color:#cbd5e1;line-height:1.9">${fileItems}</ul>
+      <button class="go" onclick="reveal('${d.stamp}')">📂 Ouvrir le dossier</button>
+    </div>`;
+}
+
+async function reveal(stamp) {
+  try { await fetch('/api/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stamp }) }); }
+  catch (e) { /* dossier accessible manuellement dans outputs/ */ }
+}
+
+load();
+</script>
+</body>
+</html>

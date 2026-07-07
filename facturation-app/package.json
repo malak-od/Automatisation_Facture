@@ -1,0 +1,16 @@
+{
+  "name": "facturation-transporteurs",
+  "version": "0.1.0",
+  "description": "Automatisation de la facturation transporteurs (multi-transporteurs, Kuehne en pilote)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "cli": "node cli.js"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "xlsx": "^0.18.5"
+  }
+}
