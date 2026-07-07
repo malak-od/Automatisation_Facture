@@ -8,6 +8,7 @@
 // ============================================================================
 const kuehne = require('./carriers/kuehne');
 const delivengo = require('./carriers/delivengo');
+const dpd = require('./carriers/dpd');
 
 function planned(meta) {
   return {
@@ -35,9 +36,7 @@ const PLANNED = [
   { id: 'gls', name: 'GLS', taxeGasoil: 'Facture PDF sans BCF',
     method: "Etendre colonnes A a E, ajouter les postes (Adresse, Colis volumineux, Frais gestion, Fret, Fret avise/retour, Zone eloignee...), MAJ TCD poids + bilan.",
     inputs: [{ key: 'facture', label: 'Facture GLS (PDF)', accept: '.pdf,.xlsx', multiple: false, required: true }] },
-  { id: 'dpd', name: 'DPD', taxeGasoil: 'Site DPD — routier 13,85%',
-    method: "Rassembler les fichiers (obtenir des donnees a partir d'un dossier), filtrer total expe + vides, coller, gerer fret 0,10/1,23 -> case adresse.",
-    inputs: [{ key: 'csv', label: 'Fichiers DPD (dossier CSV)', accept: '.csv', multiple: true, required: true }] },
+  
   { id: 'colissimo', name: 'Colissimo', taxeGasoil: 'Site La Poste (coeff. energetique)',
     method: "CSV prestation Colis + douanes, trier, ajouter les postes en fin de colonne, MAJ TCD, comparer PDF HT + indemnisation.",
     inputs: [{ key: 'csv', label: 'CSV prestation Colis + douanes', accept: '.csv', multiple: true, required: true }] },
@@ -62,7 +61,7 @@ const PLANNED = [
     inputs: [{ key: 'facture', label: 'Facture BLS', accept: '.xlsx,.csv', multiple: false, required: true }] },
 ];
 
-const carriers = [kuehne, delivengo, ...PLANNED.map(planned)];
+const carriers = [kuehne, delivengo, dpd, ...PLANNED.map(planned)];
 const byId = Object.fromEntries(carriers.map((c) => [c.id, c]));
 
 /** Metadonnees publiques (pour l'UI), sans exposer process(). */

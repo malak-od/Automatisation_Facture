@@ -111,6 +111,7 @@ app.post('/api/process', upload.any(), async (req, res) => {
       downloads,
     });
   } catch (e) {
+    console.error('Error in /api/process:', e && e.stack ? e.stack : e);
     res.status(500).json({ error: e.message });
   }
 });
