@@ -47,11 +47,29 @@
   .alerts { max-height:220px; overflow:auto; font-size:12.5px; color:#fbbf24; margin-top:8px; }
   .alerts div { padding:2px 0; }
   .spinner { color:var(--muted); }
+
+  header h1 { cursor:pointer; }
+  header h1:hover { color:var(--accent); }
+
+  .home { padding:6px 4px 24px; }
+  .home h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:14px; }
+  .tile { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 14px;
+          display:flex; flex-direction:column; align-items:center; gap:10px; cursor:pointer;
+          text-align:center; transition:transform .12s ease, border-color .12s ease; position:relative; }
+  .tile:hover { transform:translateY(-2px); border-color:var(--accent); }
+  .tile-badge { width:56px; height:56px; border-radius:12px; display:flex; align-items:center; justify-content:center;
+                font-weight:800; font-size:15px; letter-spacing:.02em; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.25);
+                box-shadow:0 2px 8px rgba(0,0,0,.35); }
+  .tile-logo-img { width:56px; height:56px; border-radius:12px; object-fit:contain; background:#fff; padding:6px; }
+  .tile-name { font-size:13px; font-weight:600; line-height:1.25; }
+  .tile-tags { display:flex; gap:5px; flex-wrap:wrap; justify-content:center; }
+  .tile .badge { font-size:9px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>🚚 Facturation Transporteurs</h1>
+  <h1 onclick="goHome()">🚚 Facturation Transporteurs</h1>
   <span class="sub">Automatisation multi-transporteurs — Kuehne opérationnel, autres planifiés</span>
 </header>
 <div class="layout">
@@ -64,6 +82,45 @@
 
 <script>
 let CARRIERS = [], current = null;
+
+// Couleurs de marque APPROXIMATIVES (pas de vrais logos disponibles pour l'instant).
+// Pour brancher un vrai logo : deposer public/logos/<id>.png (ou .svg) -> pris automatiquement,
+// le badge colore ne sert plus que de repli si l'image est absente/en erreur.
+const BRANDS = {
+  kuehne:        { initials: 'K+N', color: '#00447C' },
+  delivengo:     { initials: 'DGO', color: '#8B2FC9' },
+  dpd:           { initials: 'DPD', color: '#DC0032' },
+  ups:           { initials: 'UPS', color: '#351C15' },
+  geodis:        { initials: 'GEO', color: '#E9631A' },
+  ceva:          { initials: 'CEVA', color: '#EE7203' },
+  gls:           { initials: 'GLS', color: '#1D4EAF' },
+  colissimo:     { initials: 'COL', color: '#D9A800' },
+  chronopost:    { initials: 'CHR', color: '#E2007A' },
+  fedex:         { initials: 'FDX', color: '#4D148C' },
+  tnt:           { initials: 'TNT', color: '#FF6200' },
+  mondial_relay: { initials: 'MR',  color: '#00A651' },
+  lettres:       { initials: '✉',  color: '#64748B' },
+  bls:           { initials: 'BLS', color: '#2563EB' },
+};
+
+// Cherche logos/<id>.svg puis logos/<id>.png ; repli sur le badge colore si aucun n'existe.
+function logoOrBadge(c) {
+  return `<img class="tile-logo-img" src="/logos/${c.id}.svg" alt="${c.name}" data-id="${c.id}" onerror="logoFallback(this)">`;
+}
+
+function logoFallback(img) {
+  if (img.dataset.tried !== 'png') {
+    img.dataset.tried = 'png';
+    img.src = `/logos/${img.dataset.id}.png`;
+    return;
+  }
+  const b = BRANDS[img.dataset.id] || { initials: img.alt.slice(0,3).toUpperCase(), color: '#475569' };
+  const badge = document.createElement('div');
+  badge.className = 'tile-badge';
+  badge.style.background = b.color;
+  badge.textContent = b.initials;
+  img.replaceWith(badge);
+}
 
 async function load() {
   CARRIERS = await (await fetch('/api/carriers')).json();
@@ -80,9 +137,28 @@ async function load() {
     el.onclick = () => select(c.id, el);
     list.appendChild(el);
   }
-  const first = CARRIERS.find(c=>c.status==='ready') || CARRIERS[0];
-  const idx = CARRIERS.indexOf(first);
-  select(first.id, list.children[idx]);
+  goHome();
+}
+
+function goHome() {
+  current = null;
+  document.querySelectorAll('.carrier').forEach(n=>n.classList.remove('active'));
+  const m = document.getElementById('main');
+  const tiles = CARRIERS.map(c => `
+    <div class="tile" onclick="selectFromHome('${c.id}')">
+      ${logoOrBadge(c)}
+      <div class="tile-name">${c.name}</div>
+      <div class="tile-tags">
+        ${c.viticolis?'<span class="badge viti">Viticolis</span>':''}
+        <span class="badge ${c.status}">${c.status==='ready'?'prêt':'à venir'}</span>
+      </div>
+    </div>`).join('');
+  m.innerHTML = `<div class="home"><h2>Choisir un transporteur</h2><div class="grid">${tiles}</div></div>`;
+}
+
+function selectFromHome(id) {
+  const idx = CARRIERS.findIndex(c=>c.id===id);
+  select(id, document.getElementById('list').children[idx]);
 }
 
 function select(id, el) {
