@@ -9,10 +9,13 @@ remplacant que les donnees, tirees de l'export du suivi Delivengo (.xls).
 Mapping export -> onglet "Fichier import" :
   A Date remise      <- "Remise en poste"        F Statut       <- "Statut General"
   G Numero de suivi  <- "Numero de suivi"        H Destinataire <- "Destinataire nom"
-  X Pays (nom)       <- "Destinataire pays"      P Droits&taxes  = Poids export / 1000
+  X Pays (nom)       <- "Destinataire pays"      P Droits&taxes  = poids export brut (recherchex tracking)
   I E/P              = E si raison sociale, sinon P
   B/C/N/L/U          = constants (DELIVENGO-LPPQ / 1er du mois / avecsuivi / 1 / 1)
-  J,K,M,O,W          = FORMULES (recherche table Pays)   Q Assurance = 2e fichier (laisse vide)
+  J,K,M,O,W          = FORMULES (recherche table Pays)   Q Assurance = poids Delivengo (export) / 1000
+  P/Q ne sont que des colonnes de calcul intermediaire (servent a M = MAX(P,Q)) :
+  en fin de traitement, "Dans le fichier import" (p.14) demande de les vider, de
+  vider W (Taxe Gasoil, "Pas de TG") si 0, et de vider F (Statut) -> apply_final_cleanup().
 
 Necessite : Windows + Excel + pywin32 + pandas + xlrd.
 Usage : python finaliser_delivengo.py "<modele.xlsx>" "<sortie.xlsx>" "<export.xls>"
@@ -107,12 +110,35 @@ def build_block(rows, brut_map):
         line[8] = ep                                 # I E / P
         line[11] = 1                                 # L Nbr Colis
         line[13] = "avecsuivi"                       # N mode envoi
-        line[15] = 0.15                              # P Droits et taxes = plancher 0,15 kg
-        line[16] = poids_reel                        # Q Assurance = poids reel WMS (kg) ; None si absent -> M=0,15
+        line[15] = poids_reel if poids_reel is not None else 0.15  # P Droits et taxes (scratch) = poids export brut (recherchex) ; plancher 0,15 kg si absent
+        line[16] = round(num(r[X_POIDS]) / 1000.0, 3) if len(r) > X_POIDS else None  # Q Assurance (scratch) = poids Delivengo propre / 1000
         line[20] = 1                                 # U Fret
         line[23] = str(r[X_PAYS]).strip()            # X Pays (nom)
         block.append(line)
     return block, date_valid, nb_reel, manquants
+
+def apply_final_cleanup(ws, newLast):
+    """Etape finale p.14 "Dans le fichier import" : P/Q ne sont que des colonnes de
+    calcul (servent a M = MAX(P,Q)) et ne doivent pas se retrouver dans le livrable :
+      - geler M et W (formules) en valeurs AVANT de vider P/Q (sinon M recalculerait a 0)
+      - vider Droits et taxes (P) + Assurance (Q)
+      - Taxe gasoil (W) : "Pas de TG" -> vider si 0
+      - Statut (F) : toujours vide (info operationnelle interne, pas destinee a l'import)
+    """
+    if newLast < 2:
+        return
+    for col in (13, 23):  # M Poids, W Taxe Gasoil : formules -> valeurs figees
+        rng = ws.Range(ws.Cells(2, col), ws.Cells(newLast, col))
+        retry(lambda rng=rng: setattr(rng, "Value", rng.Value))
+    n = newLast - 1
+    wVals = ws.Range(ws.Cells(2, 23), ws.Cells(newLast, 23)).Value
+    wVals = [[wVals]] if n == 1 else wVals
+    for i, rowv in enumerate(wVals):
+        v = rowv[0] if isinstance(rowv, (tuple, list)) else rowv
+        if v in (0, None, ""):
+            retry(lambda i=i: ws.Cells(2 + i, 23).ClearContents())
+    retry(lambda: ws.Range(ws.Cells(2, 16), ws.Cells(newLast, 17)).ClearContents())  # P Droits et taxes + Q Assurance
+    retry(lambda: ws.Range(ws.Cells(2, 6), ws.Cells(newLast, 6)).ClearContents())    # F Statut
 
 def retry(fn, tries=8, delay=0.6):
     last = None
@@ -175,6 +201,7 @@ def main():
             if newLast > 2:
                 retry(lambda col=col: ws.Range(ws.Cells(2, col), ws.Cells(newLast, col)).FillDown())
         xl.Calculate()
+        apply_final_cleanup(ws, newLast)
         retry(lambda: wb.Save())
         wb.Close(SaveChanges=True)
         print("OK -> " + sortie)

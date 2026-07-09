@@ -48,6 +48,8 @@ DPD_FIELD_PATTERNS = {
     'taxe_fixe': ['taxe fixe'],
     'taxe_consolidation': ['taxe consolidation'],
     'participation_surete': ['participation surete', 'participation suret'],
+    'contribution_logistique': ['contribution logistique responsable'],
+    'frais_tenue_compte': ['frais de tenue de compte'],
     'taxe_triangular': ['taxe triangulaire', 'taxe triangulaire'],
     'colis_refacture': ['colis refactur', 'colis refacture'],
 }
@@ -58,6 +60,7 @@ MAPPED_FIELDS = {
     'supplement_dpd_secure', 'supplement_predict', 'supplement_consign',
     'supplement_ile_montagne', 'cout_vd', 'taxe_collection_request',
     'taxe_fixe', 'taxe_consolidation', 'participation_surete',
+    'contribution_logistique', 'frais_tenue_compte',
     'taxe_triangular', 'colis_refacture',
 }
 
@@ -175,23 +178,31 @@ def build_import_record(row_tuple):
     nom = row_value(row, columns.get('nom_destinataire'))
     colis_refacture = parse_amount(row_value(row, columns.get('colis_refacture')))
     prix_transport = parse_amount(row_value(row, columns.get('prix_transport')))
-    gazole = parse_amount(row_value(row, columns.get('indexation_gasoil'))) + parse_amount(row_value(row, columns.get('indexation_kerosene')))
+    # Taxe gasoil DPD = uniquement le gasoil routier (le kerosene, surcharge aerienne,
+    # n'est pas un "taxe gasoil" au sens du contrat DPD -> reste dans Fret).
+    gazole = parse_amount(row_value(row, columns.get('indexation_gasoil')))
+    kerosene = parse_amount(row_value(row, columns.get('indexation_kerosene')))
     assurance = parse_amount(row_value(row, columns.get('supplement_dpd_secure')))
     adresses = parse_amount(row_value(row, columns.get('supplement_predict'))) + parse_amount(row_value(row, columns.get('supplement_consign')))
     zones_eloignees = parse_amount(row_value(row, columns.get('supplement_ile_montagne')))
+    plus_value = parse_amount(row_value(row, columns.get('frais_tenue_compte')))
     droits_taxes = (
         parse_amount(row_value(row, columns.get('cout_vd'))) +
         parse_amount(row_value(row, columns.get('taxe_collection_request'))) +
         parse_amount(row_value(row, columns.get('taxe_fixe'))) +
         parse_amount(row_value(row, columns.get('taxe_consolidation'))) +
         parse_amount(row_value(row, columns.get('participation_surete'))) +
+        parse_amount(row_value(row, columns.get('contribution_logistique'))) +
         parse_amount(row_value(row, columns.get('taxe_triangular')))
     )
-    surplus = 0.0
-    for idx, cell in enumerate(row):
-        name = normalize_text(cell_header(row, idx)) if False else None
-    # Fallback: la colonne Fret est au moins le prix transport
-    fret = prix_transport
+    # Fret = prix transport + kerosene (surcharge aerienne, hors "taxe gasoil" DPD)
+    fret = prix_transport + kerosene
+    # Regle facturation Excel (p.8) : si le fret ne contient que les frais fixes
+    # (frais de dossier 0,10 seul, ou 0,10 + taxe eco 0,86 + taxe surete 0,27 = 1,23),
+    # le deplacer en Adresses plutot que de le laisser en Fret.
+    if abs(fret - 0.10) < 0.005 or abs(fret - 1.23) < 0.005:
+        adresses += fret
+        fret = 0.0
 
     return {
         'Transporteur': 'DPD',
@@ -214,7 +225,7 @@ def build_import_record(row_tuple):
         'ColisVolumineux': f'{colis_refacture:.2f}',
         'Adresses': f'{adresses:.2f}',
         'Fret': f'{fret:.2f}',
-        'PlusValueB2C': '0,00',
+        'PlusValueB2C': f'{plus_value:.2f}',
         'TaxeGasoil': f'{gazole:.2f}',
         'NbColis': str(parse_int(row_value(row, columns.get('nombre_de_colis')))),
     }

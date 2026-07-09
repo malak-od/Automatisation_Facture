@@ -1,3 +1,11 @@
 # Ignore CSV files across the repository
 *.csv
 *.CSV
+
+# Videos de process (trop volumineuses pour GitHub, jusqu'a ~1 Go chacune)
+*.mp4
+*.MP4
+*.mov
+*.MOV
+*.avi
+*.AVI

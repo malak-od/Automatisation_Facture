@@ -41,7 +41,7 @@ module.exports = {
   name: 'Delivengo',
   status: 'ready',
   taxeGasoil: 'Pas de taxe gasoil (frêt = 1,0).',
-  method: "Export du suivi Delivengo (.xls). Le classeur final (feuille 'Fichier import') est un clone du fichier fait a la main : A=Date remise, F=Statut, G=N° suivi, H=Destinataire, X=Pays ; P=poids/1000 ; J/K/M/O/W = formules (table Pays). Assurance (Q) = 2e fichier (export expeditions brut) a ajouter ulterieurement.",
+  method: "Export du suivi Delivengo (.xls). Le classeur final (feuille 'Fichier import') est un clone du fichier fait a la main : A=Date remise, F=Statut, G=N° suivi, H=Destinataire, X=Pays ; J/K/M/O/W = formules (table Pays). P (Droits et taxes) et Q (Assurance) ne sont que des colonnes de calcul intermediaire (poids export brut recherchex / poids Delivengo propre /1000, servent a M=MAX(P,Q)) : videes en fin de traitement, comme Statut et Taxe Gasoil si 0.",
   inputs: [
     { key: 'export', label: 'Export du suivi Delivengo (.xls)', accept: '.xls,.xlsx', multiple: false, required: true },
   ],

@@ -2,7 +2,7 @@
 //  Adaptateur transporteur : KUEHNE+NAGEL  (implemente, valide 187/187)
 // ============================================================================
 const path = require('path');
-const { readCsv, num, colIndex, round1, round2 } = require('../../core/csv');
+const { readCsv, num, colIndex, roundUp1, round2 } = require('../../core/csv');
 const { reclasser } = require('../../core/reclass');
 const { buildDeptLookup, zone } = require('../../core/zone');
 const { validate } = require('../../core/validate');
@@ -18,18 +18,19 @@ function isHorsGrille(rec) {
 }
 
 /** Transforme une fiche (rec) en ligne d'import ERP. */
-function toImportRow(rec) {
+function toImportRow(rec, dateValidite) {
   const p = rec.postes;
   const horsUe = new Set(cfg.tva.pays_hors_ue);
   return {
     _horsGrille: isHorsGrille(rec), // interne (non exporte) : sert a la validation
     _metier: rec.metier,
     Transporteur: cfg.champs_fixes.Transporteur,
-    DateValidite: cfg.champs_fixes.date_validite,
+    DateValidite: dateValidite,
     Ref1: rec.comref, Ref2: '', IdClient: '',
     Tracking: rec.tracking, Nom: rec.dest,
     EP: cfg.champs_fixes['E/P'], Pays: rec.pays, Zone: rec.zone,
-    NbrColis: Math.round(rec.colis), Poids: round1(rec.poids),
+    // Poids : arrondi SUPERIEUR (jamais au plus proche) -> voir FACTURATION EXCEL.pdf p.1
+    NbrColis: Math.round(rec.colis), Poids: roundUp1(rec.poids),
     Mode: cfg.champs_fixes['mode envoi'],
     TVA: horsUe.has(rec.pays) ? cfg.tva.hors_ue : cfg.tva.defaut,
     DroitsTaxes: p['Droits et taxes'], Assurance: p.Assurance,
@@ -87,10 +88,14 @@ function process(files) {
   });
 
   // 4. Import = 1 ligne par fiche AVEC tracking (exclusion tracking vide), aucun regroupement
-  const importRows = recs.filter((rec) => rec.tracking).map(toImportRow);
+  const period = derivePeriod(rows, header);
+  // DateValidite = 1er jour du mois de la periode reelle (deduite du CSV), jamais une
+  // constante figee en config -> evite d'importer sous le mauvais mois si on oublie de la mettre a jour.
+  const dateValidite = periodToDate(period) || cfg.champs_fixes.date_validite;
+  const importRows = recs.filter((rec) => rec.tracking).map((rec) => toImportRow(rec, dateValidite));
   const { alerts, infos } = validate(importRows);
 
-  return { header, rows, recs, importRows, controle, warnings, alerts, infos, posteKeys: POSTE_KEYS, cfg, period: derivePeriod(rows, header) };
+  return { header, rows, recs, importRows, controle, warnings, alerts, infos, posteKeys: POSTE_KEYS, cfg, period };
 }
 
 /** Periode "AAAA_MM" depuis la 1ere Date facture des CSV (fallback : date de validite tarif). */
@@ -102,6 +107,12 @@ function derivePeriod(rows, header) {
   }
   const dv = (cfg.champs_fixes.date_validite || '').match(/(\d{2})\/(\d{2})\/(\d{4})/);
   return dv ? `${dv[3]}_${dv[2]}` : 'export';
+}
+
+/** "AAAA_MM" -> "01/MM/AAAA" (format ERP "Date validite tarif"). */
+function periodToDate(period) {
+  const m = /^(\d{4})_(\d{2})$/.exec(period);
+  return m ? `01/${m[2]}/${m[1]}` : null;
 }
 
 module.exports = {

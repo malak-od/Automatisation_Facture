@@ -27,5 +27,8 @@ function colIndex(header, name) {
 
 const round2 = (x) => Math.round(x * 100) / 100;
 const round1 = (x) => Math.round(x * 10) / 10;
+// Arrondi SUPERIEUR a 1 decimale (= ARRONDI.SUP Excel), demande p.1 de FACTURATION EXCEL.pdf
+// pour le poids : evite qu'un poids arrondi au plus proche sous-facture le client.
+const roundUp1 = (x) => Math.ceil(x * 10 - 1e-9) / 10;
 
-module.exports = { readCsv, num, colIndex, round2, round1 };
+module.exports = { readCsv, num, colIndex, round2, round1, roundUp1 };

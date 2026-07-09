@@ -9,6 +9,7 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 const { readCsv, num } = require('../../core/csv');
 const { IMPORT_COLUMNS } = require('../../core/importSchema');
+const { validate } = require('../../core/validate');
 
 function process(files) {
   const csvPaths = files.csv || [];
@@ -75,7 +76,8 @@ function process(files) {
 
   try { fs.unlinkSync(out); } catch (e) { /* ignore */ }
 
-  return { header: IMPORT_COLUMNS.map((c) => c.label), recs, lignes: importRows.length, importRows, controle, warnings: [], alerts: [], infos: [], posteKeys };
+  const { alerts, infos } = validate(importRows);
+  return { header: IMPORT_COLUMNS.map((c) => c.label), recs, lignes: importRows.length, importRows, controle, warnings: [], alerts, infos, posteKeys };
 }
 
 module.exports = {
