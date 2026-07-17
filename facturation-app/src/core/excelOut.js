@@ -100,6 +100,10 @@ function styleFichierKuehne(ws) {
 /** Classeur de controle : Fichier Kuehne + TCD (statique) + Kuehne_Import + Reconciliation. */
 async function writeWorkbook(result, filePath) {
   const { header, recs, importRows, controle, alerts, warnings, pdfs, posteKeys } = result;
+  // Cle du poste "taxe gasoil" : declaree explicitement (gazoleKey) ou deduite par nom connu.
+  // Ne PAS supposer 'Gazole' en dur (Kuehne) : DPD/GLS utilisent 'TaxeGasoil' -> sinon le total
+  // "hors gazole" de la Reconciliation inclut a tort la taxe gasoil (poste jamais exclu).
+  const gazoleKey = result.gazoleKey || (posteKeys.includes('Gazole') ? 'Gazole' : posteKeys.includes('TaxeGasoil') ? 'TaxeGasoil' : null);
   const wb = new ExcelJS.Workbook();
 
   // Feuille Fichier Kuehne : 8 postes + donnees brutes
@@ -139,9 +143,9 @@ async function writeWorkbook(result, filePath) {
   rec.addRow(['RECONCILIATION']);
   rec.addRow([]); rec.addRow(['Poste calcule', 'Montant EUR']);
   for (const k of posteKeys) rec.addRow([k, r2(controle[k] || 0)]);
-  const hg = r2(posteKeys.filter((k) => k !== 'Gazole').reduce((s, k) => s + (controle[k] || 0), 0));
+  const hg = r2(posteKeys.filter((k) => k !== gazoleKey).reduce((s, k) => s + (controle[k] || 0), 0));
   const totalHt = r2(posteKeys.reduce((s, k) => s + (controle[k] || 0), 0));
-  rec.addRow(['Total hors gazole', hg]); rec.addRow(['Gazole', r2(controle.Gazole || 0)]);
+  rec.addRow(['Total hors gazole', hg]); rec.addRow(['Gazole', r2((gazoleKey && controle[gazoleKey]) || 0)]);
   rec.addRow(['TOTAL HT calcule', totalHt]); rec.addRow([]);
   if (pdfs && pdfs.length) {
     rec.addRow(['Facture PDF', 'Taxable', 'TVA', 'TTC']);

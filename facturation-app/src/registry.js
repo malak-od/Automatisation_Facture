@@ -9,6 +9,7 @@
 const kuehne = require('./carriers/kuehne');
 const delivengo = require('./carriers/delivengo');
 const dpd = require('./carriers/dpd');
+const gls = require('./carriers/gls');
 
 function planned(meta) {
   return {
@@ -33,10 +34,6 @@ const PLANNED = [
   { id: 'ceva', name: 'CEVA', taxeGasoil: 'A demander',
     method: "Etendre colonnes, si #NA ajouter dans table de correspondance, ajouter les postes en fin de colonne, MAJ TCD, comparer ecart PDF.",
     inputs: [{ key: 'facture', label: 'Facture CEVA', accept: '.xlsx,.csv', multiple: false, required: true }] },
-  { id: 'gls', name: 'GLS', taxeGasoil: 'Facture PDF sans BCF',
-    method: "Etendre colonnes A a E, ajouter les postes (Adresse, Colis volumineux, Frais gestion, Fret, Fret avise/retour, Zone eloignee...), MAJ TCD poids + bilan.",
-    inputs: [{ key: 'facture', label: 'Facture GLS (PDF)', accept: '.pdf,.xlsx', multiple: false, required: true }] },
-  
   { id: 'colissimo', name: 'Colissimo', taxeGasoil: 'Site La Poste (coeff. energetique)',
     method: "CSV prestation Colis + douanes, trier, ajouter les postes en fin de colonne, MAJ TCD, comparer PDF HT + indemnisation.",
     inputs: [{ key: 'csv', label: 'CSV prestation Colis + douanes', accept: '.csv', multiple: true, required: true }] },
@@ -61,7 +58,7 @@ const PLANNED = [
     inputs: [{ key: 'facture', label: 'Facture BLS', accept: '.xlsx,.csv', multiple: false, required: true }] },
 ];
 
-const carriers = [kuehne, delivengo, dpd, ...PLANNED.map(planned)];
+const carriers = [kuehne, delivengo, dpd, gls, ...PLANNED.map(planned)];
 const byId = Object.fromEntries(carriers.map((c) => [c.id, c]));
 
 /** Metadonnees publiques (pour l'UI), sans exposer process(). */

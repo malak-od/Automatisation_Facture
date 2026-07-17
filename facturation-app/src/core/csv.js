@@ -1,9 +1,9 @@
 // Lecture des CSV transporteurs : encodage latin-1, séparateur configurable, décimale virgule.
 const fs = require('fs');
 
-/** Lit un CSV latin-1 -> { header:[...], rows:[[...],...] }. */
-function readCsv(path, sep = ';') {
-  const text = fs.readFileSync(path).toString('latin1');
+/** Lit un CSV (latin-1 par defaut, ou l'encodage passe) -> { header:[...], rows:[[...],...] }. */
+function readCsv(path, sep = ';', encoding = 'latin1') {
+  const text = fs.readFileSync(path).toString(encoding);
   const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
   const rows = lines.map((l) => l.split(sep));
   return { header: rows[0] || [], rows: rows.slice(1) };

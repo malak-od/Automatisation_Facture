@@ -1,0 +1,67 @@
+{
+  "carrier": "GLS",
+  "csv": { "encoding": "utf8", "sep": ";", "decimal": "," },
+  "tracking": "Numéro de colis",
+  "categorie_key": "Hiérarchie produits",
+  "pays_col": "Code Pays",
+  "dest_nom_col": "adresse de destination NOM",
+  "poids_col": "Poids pour le traitement commande vente",
+  "date_facture_col": "Date de la facture",
+  "amount_cols_hors_gazole": ["Valeur de Base", "CSR", "PER", "prix kilos additionnel", "Saisie manuelle"],
+  "amount_col_gazole": "SGO",
+  "champs_fixes": { "Transporteur": "GLS", "E/P": "P", "mode envoi": "zone" },
+
+  "_comment_categorie_to_poste": "Cle = 'Hierarchie produits' du CSV GLS. Source : onglet Categories du classeur fait a la main (2026_06_Facture GLS.xlsx), confirme par la video process (mai 2025, memes formules).",
+  "categorie_to_poste": {
+    "EXPREDOMESSTANDARD": "Fret",
+    "PARCEDOMESFDS": "Fret",
+    "PARCEDOMESPRTN": "Fret retour",
+    "PARCEDOMESPSHP": "Fret",
+    "PARCEDOMESSHDS": "Fret",
+    "PARCEDOMESSTANDARD": "Fret",
+    "PARCEEUROPFDS": "Fret",
+    "PARCEEUROPSTANDARD": "Fret",
+    "PARCEGLOBASTANDARD": "Fret",
+    "SERVIALL FDS": "Fret",
+    "SURCHALL": "Fret avise",
+    "SURCHALL ADM": "Frais de gestion",
+    "SURCHALL BPTOC": "Fret",
+    "SURCHALL GEO": "Zone eloignee",
+    "SURCHALL NC": "Colis volumineux",
+    "SURCHALL NTFCNCRD": "Adresse",
+    "SURCHALL PCKNOPAR": "Adresse",
+    "SURCHALL RETURN": "Fret retour",
+    "SURCHALL SNGLPRCL": "ZZ_Ramasse unicolis"
+  },
+
+  "_comment_poste_to_erp": "L'import ERP n'a qu'une seule colonne Fret : Fret retour/avise/Frais de gestion/Ramasse unicolis s'y regroupent (pas de colonne dediee) -- a confirmer avec le metier.",
+  "poste_to_erp": {
+    "Fret": "Fret",
+    "Fret retour": "Fret",
+    "Fret avise": "Fret",
+    "Frais de gestion": "Fret",
+    "ZZ_Ramasse unicolis": "Fret",
+    "Zone eloignee": "ZonesEloignees",
+    "Colis volumineux": "ColisVolumineux",
+    "Adresse": "Adresses"
+  },
+
+  "_comment_poids_prix": "Grille tarifaire poids(kg) -> prix de base (onglet 'PA GLS'). Sert a deduire le poids quand la colonne poids brute vaut 0 (frequent) via le prix de la ligne PARCEL/FDS.",
+  "poids_prix_table": [
+    [0.5, 3.77], [1, 4.10], [2, 4.42], [3, 4.74], [4, 5.30], [5, 5.86],
+    [6, 6.42], [7, 6.98], [8, 7.61], [9, 8.26], [10, 8.89], [11, 9.53],
+    [12, 10.16], [13, 10.78], [14, 11.44]
+  ],
+
+  "_comment_zoning": "Onglet Zoning : pays -> [zone, tva]. FR = zone 'France' (pas de code loi tarifaire), les autres = zone numerique 1-5.",
+  "zoning": {
+    "AD": [2, 0.2], "AT": [3, 0.2], "BE": [1, 0.2], "BG": [4, 0.2], "CH": [3, 0],
+    "CY": [5, 0.2], "CZ": [2, 0.2], "DE": [1, 0.2], "DK": [2, 0.2], "EE": [4, 0.2],
+    "ES": [2, 0.2], "FI": [4, 0.2], "FR": ["France", 0.2], "GB": [3, 0.2], "GI": [2, 0.2],
+    "GR": [5, 0.2], "HR": [4, 0.2], "HU": [2, 0.2], "IE": [4, 0.2], "IT": [2, 0.2],
+    "LI": [3, 0.2], "LU": [1, 0.2], "LT": [4, 0.2], "LV": [4, 0.2], "MT": [5, 0.2],
+    "NL": [1, 0.2], "NO": [4, 0.2], "PL": [2, 0.2], "PT": [2, 0.2], "RE": [4, 0],
+    "RO": [4, 0.2], "SE": [4, 0.2], "SI": [4, 0.2], "SK": [2, 0.2], "SM": [2, 0.2],
+    "TR": [5, 0.2], "VA": [2, 0.2]
+  }
+}
