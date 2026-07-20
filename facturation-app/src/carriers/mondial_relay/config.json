@@ -1,0 +1,46 @@
+{
+  "carrier": "MONDIAL-RELAY",
+  "csv": { "encoding": "latin1", "sep": ";" },
+  "cols": {
+    "trackingBrut": "Nr expédition",
+    "nom": "Nom",
+    "pays": "Pays de livraison",
+    "mode": "Mode de livraison",
+    "nbColis": "Nbr colis",
+    "poidsAnnonce": "Poids annoncé",
+    "poidsMesure": "Poids mesuré",
+    "complement": "Complément",
+    "montantTransport": "Mnt.Trans. Poids Mes",
+    "gazole": "Indexation gasoil",
+    "date": "Date"
+  },
+  "champs_fixes": { "Transporteur": "MONDIAL-RELAY", "E/P": "P", "tva": 0.2 },
+
+  "_comment_zone": "Onglet 'Pays' du classeur fait a la main (2026_06_Facture Mondial Relay.xlsx) : cle = Mode brut + '-' + Pays -> zone normalisee. Contient DEJA les entrees 24RC-FR et LCC-FR -> 24R-FR (la substitution 24RC/LCC->24R mentionnee dans les notes terrain est en realite geree par cette table de lookup, pas par un remplacement texte). Comprend aussi des consolidations tarifaires (LU/HOM -> zone BE, BE/24R -> zone FR).",
+  "zone_table": {
+    "24L-FR": "24L-FR",
+    "24R-AT": "24R-AT",
+    "24R-BE": "24R-FR",
+    "24RC-FR": "24R-FR",
+    "24R-DE": "24R-DE",
+    "24R-ES": "24R-ES",
+    "24R-FR": "24R-FR",
+    "24R-IT": "24R-IT",
+    "24R-LU": "24R-FR",
+    "24R-NL": "24R-NL",
+    "24R-PT": "24R-PT",
+    "HOM-AT": "HOM-AT",
+    "HOM-BE": "HOM-BE",
+    "HOM-DE": "HOM-DE",
+    "HOM-ES": "HOM-ES",
+    "HOM-IT": "HOM-IT",
+    "HOM-LU": "HOM-BE",
+    "HOM-NL": "HOM-NL",
+    "HOM-PT": "HOM-PT",
+    "LCC-FR": "24R-FR"
+  },
+
+  "_comment_gazole": "Indexation gasoil (colonne brute) est REELLEMENT facturee (incluse dans le total reconcilie face au PDF, onglet 'Controle xls pdf') mais N'A PAS de colonne dediee dans 'Fichier import' du classeur fait a la main (colonne Taxe Gasoil jamais remplie) -> cf note terrain 'Taxe Gasoil : identique au mois precedent', semble geree hors fichier, directement dans l'ERP. On la calcule quand meme ici pour un total de controle exact, mais on ne la met PAS dans TaxeGasoil de l'import (fidelite au process reel) -> remontee en info.",
+
+  "_comment_complement": "Regle exacte du classeur (colonne Zones eloignees / Fret de Fichier import) : Complement=0 ou =0,03 -> pas reporte en Zones eloignees ; si =0,03 EXACTEMENT, il est ajoute au Fret au lieu d'etre ignore."
+}

@@ -1,0 +1,38 @@
+{
+  "carrier": "GEODIS",
+  "recepisse_col": "N° récépissé",
+  "ref1_col": "Référence 1",
+  "date_piece_col": "Date pièce",
+  "dest_nom_col": "Nom destinataire",
+  "pays_col": "Code pays destinataire",
+  "nb_colis_col": "Nb Colis",
+  "poids_col": "Poids origine (kg)",
+  "champs_fixes": { "Transporteur": "GEODIS", "E/P": "", "mode envoi": "ST", "zone": "France", "tva": 0.2 },
+
+  "_comment_frais_fixe": "Frais de tenue de compte GEODIS : forfait mensuel fixe (28,50EUR au 06/2026, cf onglet Bilan Factures), sans tracking associe -> ne peut pas devenir une ligne d'import ERP normale, remonte en info/controle pour ajout manuel.",
+  "frais_tenue_compte_mensuel": 28.5,
+
+  "_comment_postes": "Mapping decode des FORMULES du classeur fait a la main (2026_06_Facture Geodis.xlsx, onglet 'Factures Geodis', colonnes D a M) : chaque poste = somme de colonnes nommees precises (noms stables, positions NON stables -> le PDF previent explicitement que les colonnes se decalent d'un mois a l'autre, confirme aussi en comparant avril/juin).",
+  "postes_from_columns": {
+    "DroitsTaxes": ["Formalités Douane Exp (HT)", "Formalités Douane Imp, (HT)", "Traitement inform, De douane (HT)"],
+    "Assurance": ["Montant Assurance ad valorem (HT)"],
+    "ZonesEloignees": ["Localités spécifiques (HT)"],
+    "ColisVolumineux": ["Poids et/ou volume déclaré erroné", "Expédition Hors Norme (HT)"],
+    "Adresses": ["Enlèvement à blanc (HT)", "Enlèvement extérieur (HT)", "Livraison saisonnière (HT)", "Taxe kilométrique Belgique (HT)"],
+    "Fret": [
+      "Mt HT /EXO Transport", "Participation Sûreté & Environnement (HT)", "Port dû (HT)", "Course (HT)",
+      "Top H (HT)", "Frais fixes administratifs (HT)", "Traitement multi-colis (HT)",
+      "Livraison Paris - Région parisienne (HT)", "Nouvelle présentation (HT)", "Livraison GMS et PF logistiques (HT)",
+      "Livraison MIN (HT)", "Livraison Transitaire (HT)", "Livraison du particulier (HT)", "Traitement manuel (HT)",
+      "Modification d'écriture (HT)", "Expédition Hors Norme (HT)", "Signature hors tablette (HT)", "Transmission POD (HT)",
+      "Livraison sur RV tél, (HT)", "Livraison sur RV web (HT)", "Livraison le samedi (HT)", "Livraison l'après-midi (HT)",
+      "Livraison le matin (HT)", "Livraison à date fixe (HT)", "Livraison à l'étage (HT)", "Mise en lieu d'ut, (HT)",
+      "Dépotage (HT)", "Echange à la livraison (HT)", "Remise d'un BL au desti, (HT)", "Signature sur BL client (HT)",
+      "Marchandises Dang, ADR (HT)", "Marchandises Dang, LQEQ (HT)", "Vins & Spiritueux (HT)", "Suivi au colis (HT)",
+      "LC2 - LIVRAISON SUR CRENEAU HORAIRE  (HT)", "LCS - LIVRAISON A HEURE DETERMINEE  (HT)"
+    ],
+    "PlusValueB2C": [],
+    "Gazole": ["Surcharge Carburant (HT)"]
+  },
+  "_note_double_compte": "'Expedition Hors Norme (HT)' est comptee A LA FOIS dans ColisVolumineux et dans Fret dans le classeur original (verifie sur les formules D9 et K11) -> reproduit a l'identique, pas corrige unilateralement (a confirmer avec le metier si c'est voulu)."
+}
