@@ -77,7 +77,10 @@ function process(files) {
   try { fs.unlinkSync(out); } catch (e) { /* ignore */ }
 
   const { alerts, infos } = validate(importRows);
-  return { header: IMPORT_COLUMNS.map((c) => c.label), recs, lignes: importRows.length, importRows, controle, warnings: [], alerts, infos, posteKeys };
+  return {
+    header: IMPORT_COLUMNS.map((c) => c.label), recs, lignes: importRows.length, importRows, controle, warnings: [], alerts, infos, posteKeys,
+    sheetNames: { raw: 'Facture DPD', import: 'Import ERP' },
+  };
 }
 
 module.exports = {

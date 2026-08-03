@@ -26,10 +26,15 @@ function writeImportCsv(importRows, filePath) {
   fs.writeFileSync(filePath, Buffer.from(lines.join('\r\n'), 'latin1'));
 }
 
+/** Nom de feuille Excel valide : 31 caracteres max, sans : \ / ? * [ ]. */
+function sheetName(name) {
+  return String(name || 'Feuille').replace(/[:\\/?*[\]]/g, '_').slice(0, 31);
+}
+
 /** Import XLSX = valeurs seules (le fichier a deposer dans l'ERP). */
-async function writeImportXlsx(importRows, filePath) {
+async function writeImportXlsx(importRows, filePath, importSheetName = 'Import') {
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('Kuehne_Import');
+  const ws = wb.addWorksheet(sheetName(importSheetName));
   ws.addRow(IMPORT_COLUMNS.map((c) => c.label));
   for (const o of importRows) {
     ws.addRow(IMPORT_COLUMNS.map((c) => {
@@ -104,10 +109,17 @@ async function writeWorkbook(result, filePath) {
   // Ne PAS supposer 'Gazole' en dur (Kuehne) : DPD/GLS utilisent 'TaxeGasoil' -> sinon le total
   // "hors gazole" de la Reconciliation inclut a tort la taxe gasoil (poste jamais exclu).
   const gazoleKey = result.gazoleKey || (posteKeys.includes('Gazole') ? 'Gazole' : posteKeys.includes('TaxeGasoil') ? 'TaxeGasoil' : null);
+  // Noms d'onglets = ceux du transporteur traite (pas "Kuehne" en dur) : soit fournis
+  // explicitement par l'adaptateur (result.sheetNames, pour matcher pile le classeur fait
+  // a la main), soit derives du nom du transporteur.
+  const carrierName = result.carrierName || 'Transporteur';
+  const sn = result.sheetNames || {};
+  const rawSheetName = sn.raw || `Facture ${carrierName}`;
+  const importSheetName = sn.import || `${carrierName}_Import`;
   const wb = new ExcelJS.Workbook();
 
-  // Feuille Fichier Kuehne : 8 postes + donnees brutes
-  const fk = wb.addWorksheet('Fichier Kuehne');
+  // Feuille brute : 8 postes + donnees du transporteur
+  const fk = wb.addWorksheet(sheetName(rawSheetName));
   const comp = ['ID Client', 'Tracking', 'Total hors GO', 'Total + GO', 'Droits et taxes', 'Assurance', 'Zones eloignees', 'Colis volumineux', 'Adresses', 'Fret', 'Plus value B2C', 'Gazole'];
   fk.addRow(comp.concat(header));
   const z = (v) => (v === 0 ? null : v); // cellule VIDE si pas de valeur (au lieu de 0,00)
@@ -133,8 +145,8 @@ async function writeWorkbook(result, filePath) {
   const r2 = (x) => Math.round(x * 100) / 100;
   for (const [k, a] of agg) tcd.addRow([k, a.comref, a.dest, a.pays, a.zone, ...posteKeys.map((p) => r2(a.postes[p])), r2(a.hg), r2(a.ag), Math.round(a.colis), Math.round(a.poids * 10) / 10]);
 
-  // Feuille Kuehne_Import : valeurs seules
-  const imp = wb.addWorksheet('Kuehne_Import');
+  // Feuille import : valeurs seules
+  const imp = wb.addWorksheet(sheetName(importSheetName));
   imp.addRow(IMPORT_COLUMNS.map((c) => c.label));
   for (const o of importRows) imp.addRow(IMPORT_COLUMNS.map((c) => { const v = cellValue(o, c); return c.num ? (v === '' ? null : v) : (v === '' ? null : String(v)); }));
 

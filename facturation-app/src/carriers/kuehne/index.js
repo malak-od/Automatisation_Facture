@@ -95,7 +95,7 @@ function process(files) {
   const importRows = recs.filter((rec) => rec.tracking).map((rec) => toImportRow(rec, dateValidite));
   const { alerts, infos } = validate(importRows);
 
-  return { header, rows, recs, importRows, controle, warnings, alerts, infos, posteKeys: POSTE_KEYS, cfg, period };
+  return { header, rows, recs, importRows, controle, warnings, alerts, infos, posteKeys: POSTE_KEYS, cfg, period, sheetNames: { raw: 'Fichier Kuehne', import: 'Kuehne_Import' } };
 }
 
 /** Periode "AAAA_MM" depuis la 1ere Date facture des CSV (fallback : date de validite tarif). */

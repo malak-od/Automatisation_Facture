@@ -115,6 +115,7 @@ function process(files) {
   return {
     header, rows, recs, importRows, controle, warnings, alerts, infos,
     posteKeys: POSTE_KEYS, cfg,
+    sheetNames: { raw: 'Facture Mondial Relay', import: 'Fichier import' },
     period: dateValidite ? `${dateValidite.slice(6)}_${dateValidite.slice(3, 5)}` : 'export',
   };
 }

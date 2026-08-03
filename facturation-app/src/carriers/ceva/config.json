@@ -1,0 +1,25 @@
+{
+  "carrier": "CEVA",
+  "csv": { "encoding": "latin1", "sep": ";" },
+  "cols": {
+    "tracking": "Numéro d'ordre",
+    "nomLivraison": "Nom pour la livraison",
+    "paysLivraison": "Pays pour la livraison",
+    "dateLivraison": "Date et heure Livraison (Réalisation)",
+    "nbColis": "Nombre de colis",
+    "poids": "Poids total des colis",
+    "montantHT": "Montant total HT",
+    "surchargeCarburant": "Surcharge carburant",
+    "codePrestation": "Code prestation",
+    "libellePrestation": "Libellé prestation"
+  },
+  "champs_fixes": { "Transporteur": "CEVA", "tva": 0.2 },
+
+  "_comment_correspondance": "Table de correspondance Code prestation -> poste ERP (onglet 'Table de correspondance' du classeur fait a la main, PAS de fichier de reference disponible en local pour juin 2026 -> seed limitee aux 2 codes vus dans les echantillons reels (CSV + PDF de facture). A COMPLETER au fil des mois : tout code absent de cette table part dans Fret par defaut ET remonte une alerte explicite (reproduit le comportement humain du PDF p.4 : 'Si #NA rajouter correspondance dans table correspondance').",
+  "correspondance_prestation": {
+    "SP005": "Fret",
+    "SP026": "Fret"
+  },
+  "_comment_gazole": "Taxe gazole = colonne 'Surcharge carburant' du CSV directement (pas de calcul), comme Geodis/GLS/Mondial Relay.",
+  "_comment_zone_ep": "AUCUNE regle de zone/E-P confirmee pour CEVA (pas de classeur de reference a decoder, le PDF ne la decrit pas). Zone = 'France' si pays FR, sinon le code pays tel quel (repli simple, a valider). E/P et mode envoi laisses vides -> alertes 'a verifier' volontaires plutot qu'une valeur inventee."
+}

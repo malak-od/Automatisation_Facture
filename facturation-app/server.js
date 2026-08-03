@@ -47,7 +47,7 @@ app.post('/api/process', upload.any(), async (req, res) => {
     const files = {};
     for (const f of req.files || []) (files[f.fieldname] = files[f.fieldname] || []).push(f.path);
 
-    const result = carrier.process(files);
+    const result = await carrier.process(files);
     const period = result.period || 'export';
     const suffix = 'test'; // suffixe figé (différencie du fichier fait à la main)
     const workbookOnly = !!carrier.workbookOnly; // ex. Delivengo : le classeur EST l'import
@@ -67,7 +67,7 @@ app.post('/api/process', upload.any(), async (req, res) => {
     // 1) Import ERP valeurs seules (CSV + XLSX) — sauf transporteurs "classeur seul"
     if (!workbookOnly && impXlsxName) {
       writeImportCsv(result.importRows, path.join(dir, impCsvName));
-      await writeImportXlsx(result.importRows, path.join(dir, impXlsxName));
+      await writeImportXlsx(result.importRows, path.join(dir, impXlsxName), (result.sheetNames || {}).import || `${carrier.name}_Import`);
     }
 
     // 2) Classeur = CLONE FIDELE du fichier fait a la main (Excel COM/Python) ; repli exceljs.
@@ -88,10 +88,10 @@ app.post('/api/process', upload.any(), async (req, res) => {
       } catch (e) {
         console.warn('Finaliseur Excel KO :', String(e.stderr || e.message || '').slice(0, 300));
         if (workbookOnly) throw e; // pas de repli exceljs possible (pas de schema d'import generique)
-        await writeWorkbook({ ...result, pdfs: null }, wbPath);
+        await writeWorkbook({ ...result, pdfs: result.pdfs || null, carrierName: carrier.name }, wbPath);
       }
     } else {
-      await writeWorkbook({ ...result, pdfs: null }, wbPath);
+      await writeWorkbook({ ...result, pdfs: result.pdfs || null }, wbPath);
     }
 
     const link = (name) => ({ url: `/outputs/${stamp}/${encodeURIComponent(name)}`, name });

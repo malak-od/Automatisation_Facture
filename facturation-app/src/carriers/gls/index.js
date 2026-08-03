@@ -149,6 +149,7 @@ function process(files) {
     header, rows, recs, importRows, controle, warnings, alerts,
     infos: [...infos, ...validateInfos],
     posteKeys: POSTE_KEYS, gazoleKey: 'TaxeGasoil', cfg,
+    sheetNames: { raw: 'Facture GLS', import: 'Import csv' },
     period: dateValidite ? `${dateValidite.slice(6)}_${dateValidite.slice(3, 5)}` : 'export',
   };
 }

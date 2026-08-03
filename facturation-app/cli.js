@@ -56,7 +56,7 @@ async function main() {
   const files = gatherFiles(carrier, dir);
   console.log(`== ${carrier.name} == fichiers :`, Object.fromEntries(Object.entries(files).map(([k, v]) => [k, v.length])));
 
-  const res = carrier.process(files);
+  const res = await carrier.process(files);
   const totalHt = res.posteKeys.reduce((s, k) => s + (res.controle[k] || 0), 0);
   console.log(`\n${res.importRows.length} lignes d'import.  Totaux postes :`);
   for (const k of res.posteKeys) console.log(`   ${k.padEnd(18)}= ${Math.round((res.controle[k] || 0) * 100) / 100}`);
@@ -73,8 +73,8 @@ async function main() {
   if (out) {
     fs.mkdirSync(out, { recursive: true });
     writeImportCsv(res.importRows, path.join(out, 'import.csv'));
-    await writeImportXlsx(res.importRows, path.join(out, 'import.xlsx'));
-    await writeWorkbook({ ...res, pdfs: null }, path.join(out, `${carrier.id}_workbook.xlsx`));
+    await writeImportXlsx(res.importRows, path.join(out, 'import.xlsx'), (res.sheetNames || {}).import || `${carrier.name}_Import`);
+    await writeWorkbook({ ...res, pdfs: res.pdfs || null, carrierName: carrier.name }, path.join(out, `${carrier.id}_workbook.xlsx`));
     console.log(`\nFichiers ecrits dans ${out}/ : import.csv, import.xlsx, ${carrier.id}_workbook.xlsx`);
   }
 }
