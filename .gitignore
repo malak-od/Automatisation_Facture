@@ -9,3 +9,7 @@
 *.MOV
 *.avi
 *.AVI
+
+# Python
+__pycache__/
+*.pyc
