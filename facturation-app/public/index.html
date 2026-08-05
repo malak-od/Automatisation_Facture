@@ -33,6 +33,15 @@
   .drop label { display:block; font-weight:600; margin-bottom:6px; }
   .drop input { width:100%; color:var(--muted); }
   .drop .req { color:var(--warn); }
+  .filelist { list-style:none; margin:0 0 8px; padding:0; display:flex; flex-direction:column; gap:5px; }
+  .filelist li { display:flex; align-items:center; gap:8px; background:#0b1222; border:1px solid var(--line);
+                 border-radius:7px; padding:6px 10px; font-size:12.5px; color:#cbd5e1; }
+  .filelist li .fname { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .filelist li button { background:none; border:0; color:var(--muted); cursor:pointer; font-size:15px; line-height:1; padding:0 2px; }
+  .filelist li button:hover { color:#ef4444; }
+  .addfile { background:#0b1222; border:1px dashed var(--line); color:var(--muted); border-radius:7px;
+             padding:7px 12px; cursor:pointer; font-size:12.5px; }
+  .addfile:hover { border-color:var(--accent); color:var(--accent); }
   button.go { background:var(--accent); color:#04283a; border:0; padding:11px 20px; border-radius:9px; font-weight:700; cursor:pointer; font-size:14px; }
   button.go:disabled { opacity:.5; cursor:not-allowed; }
   .plan-note { color:var(--warn); background:rgba(245,158,11,.08); border:1px solid rgba(245,158,11,.25); border-radius:10px; padding:12px 14px; }
@@ -182,20 +191,69 @@ function render() {
 
   html += `<div class="card"><h3>1. Déposer les documents fournis par ${c.name}</h3><form id="form">`;
   for (const inp of c.inputs) {
-    html += `<div class="drop"><label>${inp.label} ${inp.required?'<span class="req">*</span>':''}</label>
-      <input type="file" name="${inp.key}" accept="${inp.accept}" ${inp.multiple?'multiple':''} ${inp.required?'required':''}></div>`;
+    if (inp.multiple) {
+      // fichiers accumules en JS (pickedFiles) : re-selectionner n'ecrase pas ceux deja choisis,
+      // contrairement au comportement natif d'un <input type="file" multiple">.
+      html += `<div class="drop" data-key="${inp.key}">
+        <label>${inp.label} ${inp.required?'<span class="req">*</span>':''}</label>
+        <ul class="filelist" id="filelist-${inp.key}"></ul>
+        <button type="button" class="addfile" onclick="pickMore('${inp.key}','${inp.accept}')">+ Ajouter un ou plusieurs fichiers</button>
+      </div>`;
+    } else {
+      html += `<div class="drop"><label>${inp.label} ${inp.required?'<span class="req">*</span>':''}</label>
+        <input type="file" name="${inp.key}" accept="${inp.accept}" ${inp.required?'required':''}></div>`;
+    }
   }
   html += `<button class="go" type="submit">Générer l'import + le classeur</button></form></div>
     <div id="result"></div>`;
   m.innerHTML = html;
+  pickedFiles = {};
+  for (const inp of c.inputs) if (inp.multiple) { pickedFiles[inp.key] = []; renderFileList(inp.key); }
   document.getElementById('form').onsubmit = run;
+}
+
+// Fichiers accumules par champ "multiple" (cle input -> File[]), independants du DOM natif.
+let pickedFiles = {};
+
+function pickMore(key, accept) {
+  const tmp = document.createElement('input');
+  tmp.type = 'file'; tmp.multiple = true; if (accept) tmp.accept = accept;
+  tmp.onchange = () => {
+    pickedFiles[key].push(...tmp.files);
+    renderFileList(key);
+  };
+  tmp.click();
+}
+
+function removeFile(key, idx) {
+  pickedFiles[key].splice(idx, 1);
+  renderFileList(key);
+}
+
+function renderFileList(key) {
+  const ul = document.getElementById(`filelist-${key}`);
+  if (!ul) return;
+  ul.innerHTML = pickedFiles[key].map((f, i) => `
+    <li><span class="fname">📄 ${f.name}</span><button type="button" onclick="removeFile('${key}',${i})" title="Retirer">✕</button></li>
+  `).join('') || '<li style="color:var(--muted);border-style:dashed">Aucun fichier sélectionné</li>';
 }
 
 async function run(e) {
   e.preventDefault();
+  // champs "multiple" requis mais vides (pickedFiles) : le navigateur ne peut pas
+  // le valider lui-meme puisque ce ne sont plus de vrais <input required>.
+  for (const inp of current.inputs) {
+    if (inp.multiple && inp.required && !(pickedFiles[inp.key] || []).length) {
+      alert(`${inp.label} : au moins un fichier est requis.`);
+      return;
+    }
+  }
   const btn = e.target.querySelector('button');
   btn.disabled = true; btn.textContent = 'Traitement…';
   const fd = new FormData(e.target);
+  for (const inp of current.inputs) {
+    if (inp.multiple) for (const f of (pickedFiles[inp.key] || [])) fd.append(inp.key, f);
+  }
   fd.append('carrier', current.id);
   const r = document.getElementById('result');
   r.innerHTML = '<p class="spinner">Calcul en cours…</p>';
@@ -214,7 +272,9 @@ function renderResult(d) {
   const hasTotals = Object.keys(totaux).length > 0;
   const rows = Object.entries(totaux).map(([k,v])=>`<tr><td>${k}</td><td class="n">${v.toFixed(2)}</td></tr>`).join('');
   const icons = { workbook: '📊', xlsx: '📥', csv: '📄' };
-  const fileItems = Object.entries(d.downloads || {}).map(([k,x])=>`<li>${icons[k]||'📄'} ${x.name}</li>`).join('');
+  const downloads = d.downloads || {};
+  const fileItems = Object.entries(downloads).filter(([k])=>k!=='multi').map(([k,x])=>`<li>${icons[k]||'📄'} ${x.name}</li>`).join('')
+    + (downloads.multi || []).map((m)=>`<li>📄 ${m.csv.name} (${m.lignes} lignes)</li><li>📥 ${m.xlsx.name}</li>`).join('');
   document.getElementById('result').innerHTML = `
     <div class="card"><h3>2. Résultat — ${d.lignes} lignes</h3>
       ${hasTotals ? `<div class="total">${d.totalHt.toFixed(2)} € HT</div>
@@ -224,7 +284,7 @@ function renderResult(d) {
       ${(d.infos||[]).length?`<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">ℹ️ ${d.infos.length} ligne(s) affrètement/navette — zone volontairement vide (hors grille tarifaire)</summary><div class="alerts" style="color:#7dd3fc">${d.infos.map(a=>`<div>${a}</div>`).join('')}</div></details>`:''}
     </div>
     <div class="card"><h3>3. Fichiers générés${d.periode ? ' — période ' + d.periode : ''}</h3>
-      ${d.classeurClone ? '<div class="kv" style="color:#7dd3fc">📊 Classeur = <b>copie fidèle</b> du fichier fait à la main (feuilles, formules, pivots, mise en forme)</div>' : '<div class="kv">📊 Classeur en version simplifiée (Excel non disponible)</div>'}
+      ${downloads.workbook ? (d.classeurClone ? '<div class="kv" style="color:#7dd3fc">📊 Classeur = <b>copie fidèle</b> du fichier fait à la main (feuilles, formules, pivots, mise en forme)</div>' : '<div class="kv">📊 Classeur en version simplifiée (Excel non disponible)</div>') : ''}
       <div class="kv" style="margin-top:8px">✅ Enregistrés dans le dossier <b>outputs\\${d.stamp}\\</b> :</div>
       <ul style="margin:6px 0 14px 20px;color:#cbd5e1;line-height:1.9">${fileItems}</ul>
       <button class="go" onclick="reveal('${d.stamp}')">📂 Ouvrir le dossier</button>

@@ -3,7 +3,7 @@
 //  - alerts : lignes a VERIFIER (vraies anomalies)
 //  - infos  : lignes NORMALES a connaitre (affretement / navette : zone volontairement vide,
 //             pour que l'ERP n'aille PAS chercher la grille tarifaire).
-function validate(importRows) {
+function validate(importRows, opts = {}) {
   const alerts = [];
   const infos = [];
   importRows.forEach((o, idx) => {
@@ -36,7 +36,7 @@ function validate(importRows) {
     // -- Quantites --
     if (!o.NbrColis) alerts.push(`L${l} ${t}: COLIS = 0`);
     if (!o.Poids) alerts.push(`L${l} ${t}: POIDS = 0`);
-    else if (Math.round(o.Poids * 10) !== o.Poids * 10) alerts.push(`L${l} ${t}: POIDS ${o.Poids} a plus d'1 decimale`);
+    else if (!opts.skipPoidsDecimal && Math.round(o.Poids * 10) !== o.Poids * 10) alerts.push(`L${l} ${t}: POIDS ${o.Poids} a plus d'1 decimale`);
 
     // -- Montants (fret != 0, sauf si un autre poste porte le montant) --
     const autres = o.DroitsTaxes || o.Assurance || o.ZonesEloignees || o.ColisVolumineux || o.Adresses || o.PlusValueB2C;

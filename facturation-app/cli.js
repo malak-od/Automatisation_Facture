@@ -72,10 +72,29 @@ async function main() {
   const out = arg('out');
   if (out) {
     fs.mkdirSync(out, { recursive: true });
-    writeImportCsv(res.importRows, path.join(out, 'import.csv'));
-    await writeImportXlsx(res.importRows, path.join(out, 'import.xlsx'), (res.sheetNames || {}).import || `${carrier.name}_Import`);
-    await writeWorkbook({ ...res, pdfs: res.pdfs || null, carrierName: carrier.name }, path.join(out, `${carrier.id}_workbook.xlsx`));
-    console.log(`\nFichiers ecrits dans ${out}/ : import.csv, import.xlsx, ${carrier.id}_workbook.xlsx`);
+    const written = [];
+    if (res.multiImports) {
+      for (const m of res.multiImports) {
+        writeImportCsv(m.importRows, path.join(out, `${m.name}_import.csv`));
+        await writeImportXlsx(m.importRows, path.join(out, `${m.name}_import.xlsx`), m.sheetName || m.name);
+        written.push(`${m.name}_import.csv`, `${m.name}_import.xlsx`);
+      }
+    } else {
+      writeImportCsv(res.importRows, path.join(out, 'import.csv'));
+      await writeImportXlsx(res.importRows, path.join(out, 'import.xlsx'), (res.sheetNames || {}).import || `${carrier.name}_Import`);
+      written.push('import.csv', 'import.xlsx');
+    }
+    if (!carrier.noWorkbook) {
+      const wbOut = path.join(out, `${carrier.id}_workbook.xlsx`);
+      if (res.prebuiltWorkbookPath && fs.existsSync(res.prebuiltWorkbookPath)) {
+        fs.copyFileSync(res.prebuiltWorkbookPath, wbOut);
+        try { fs.unlinkSync(res.prebuiltWorkbookPath); } catch (e) { /* ignore */ }
+      } else {
+        await writeWorkbook({ ...res, pdfs: res.pdfs || null, carrierName: carrier.name }, wbOut);
+      }
+      written.push(`${carrier.id}_workbook.xlsx`);
+    }
+    console.log(`\nFichiers ecrits dans ${out}/ : ${written.join(', ')}`);
   }
 }
 

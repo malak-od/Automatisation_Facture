@@ -1,0 +1,38 @@
+{
+  "_comment": "Source = fichier WMS brut 'Export expeditions_brut.xlsx' (meme fichier que Delivengo utilise en fallback poids), filtre sur la colonne TRANSPORTEUR. Pas de classeur de reference local pour ce transporteur -> pas de finaliseur Excel COM, ecriture directe des 3 fichiers import (mappings decodes via les 2 videos process + les 2 CSV de reference deja fournis).",
+
+  "brut_cols": {
+    "codeExpe": 0,
+    "dateExpe": 1,
+    "nom": 18,
+    "pays": 27,
+    "nbColis": 33,
+    "poids": 34,
+    "tracking": 41,
+    "transporteur": 44
+  },
+
+  "_comment_groupes": "3 fichiers finaux, decodes depuis les videos process + verifies sur les 2 CSV de reference deja fournis (2026_06_Lettre suivie_Import fichier.csv = 3683 lignes = Lettre Suivie(201)+LETTRE-SUIVIE-HYDRATIS(3482) exactement ; 2026_06_Lettre suivie prepa_Import fichier.csv = 946 lignes = LETTRE-SUIVIE-PREPA(954) moins 8 lignes a PRO_TRACKING vide AVANT correction CODE_EXPE -- verifie: ces 8 CODE_EXPE precis sont absents du CSV de reference. Le 3e groupe (SLAACE) n'a aucune ligne dans le brut de juin 2026 -- structure decodee uniquement depuis la video (mai 2025, 5 lignes).",
+  "groupes": {
+    "suivie": {
+      "transporteurs_bruts": ["Lettre Suivie", "LETTRE-SUIVIE-HYDRATIS"],
+      "nomTransporteurErp": "LETTRE-SUIVIE",
+      "zone": "France", "mode": "LS", "tva": 0.2, "fret": 3.83,
+      "sheetImport": "Lettre suivie", "outputSuffix": "Lettre_suivie"
+    },
+    "prepa": {
+      "transporteurs_bruts": ["LETTRE-SUIVIE-PREPA"],
+      "nomTransporteurErp": "LETTRE-SUIVIE-PREPA",
+      "zone": "France", "mode": "LS", "tva": 0.2, "fret": 0.01,
+      "sheetImport": "Lettre suivie prépa", "outputSuffix": "Lettre_suivie_prepa"
+    },
+    "slaace": {
+      "transporteurs_bruts": ["LETTRE-TIMBRE-SLAACE"],
+      "nomTransporteurErp": "LETTRE-TIMBRE-SLAACE",
+      "zone": "DE", "mode": "DOMDE", "tva": 0, "fret": 1.65,
+      "sheetImport": "Lettre Timbre Allemagne", "outputSuffix": "Lettre_Timbre_Allemagne_SLAACE"
+    }
+  },
+
+  "_comment_tracking": "PRO_TRACKING vide -> remplace par CODE_EXPE (mecanisme observe dans la video : correction manuelle du tracking invalide dans le WMS La Ruche, qui aboutit a =CODE_EXPE colle dans le brut). Decision utilisateur : appliquer uniformement aux 3 groupes (meme si l'arithmetique brute du groupe Prepa sur juin 2026 pointait plutot vers une exclusion -- retenu : coherence avec le process reel documente en video plutot qu'une simple coincidence de comptage sur 1 mois)."
+}

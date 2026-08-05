@@ -20,6 +20,16 @@ fs.mkdirSync(OUTPUTS, { recursive: true });
 
 const upload = multer({ dest: UPLOADS });
 
+/** Message clair quand le classeur de sortie est ouvert dans Excel (EBUSY a
+ * l'ecriture) : le message brut Node/Windows ne dit pas quoi faire. */
+function explainFileError(e, targetPath) {
+  const msg = String((e && e.stderr) || e.message || e);
+  if (/EBUSY|resource busy|being used by another process/i.test(msg)) {
+    return new Error(`Le fichier "${path.basename(targetPath)}" est actuellement ouvert dans Excel (ou un autre programme) — ferme-le puis réessaie.`);
+  }
+  return e;
+}
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/outputs', express.static(OUTPUTS));
@@ -65,15 +75,45 @@ app.post('/api/process', upload.any(), async (req, res) => {
     fs.mkdirSync(dir, { recursive: true });
 
     // 1) Import ERP valeurs seules (CSV + XLSX) — sauf transporteurs "classeur seul"
-    if (!workbookOnly && impXlsxName) {
+    // multiImports : transporteurs a plusieurs fichiers import distincts (ex. Lettres :
+    // Suivie / Prepa / SLAACE, fidele aux 3 fichiers du process reel).
+    const multiDownloads = [];
+    if (!workbookOnly && result.multiImports) {
+      for (const m of result.multiImports) {
+        const csvName = `${period}_${m.name}_Import_${suffix}.csv`;
+        const xlsxName = `${period}_${m.name}_Import_${suffix}.xlsx`;
+        writeImportCsv(m.importRows, path.join(dir, csvName));
+        await writeImportXlsx(m.importRows, path.join(dir, xlsxName), m.sheetName || m.name);
+        multiDownloads.push({
+          key: m.key, name: m.name, lignes: m.lignes,
+          csv: { url: `/outputs/${stamp}/${encodeURIComponent(csvName)}`, name: csvName },
+          xlsx: { url: `/outputs/${stamp}/${encodeURIComponent(xlsxName)}`, name: xlsxName },
+        });
+      }
+    } else if (!workbookOnly && impXlsxName) {
       writeImportCsv(result.importRows, path.join(dir, impCsvName));
       await writeImportXlsx(result.importRows, path.join(dir, impXlsxName), (result.sheetNames || {}).import || `${carrier.name}_Import`);
     }
 
     // 2) Classeur = CLONE FIDELE du fichier fait a la main (Excel COM/Python) ; repli exceljs.
+    // noWorkbook : transporteurs sans classeur de reference (ex. Lettres, 3 imports
+    // separes calcules en JS pur) -> writeWorkbook() attend une structure recs/rows
+    // absente ici, pas la peine de produire un classeur casse/vide.
     const wbPath = path.join(dir, wbName);
     let workbookMode = 'exceljs';
-    if (carrier.finalizer) {
+    if (carrier.noWorkbook) {
+      workbookMode = 'none';
+    } else if (result.prebuiltWorkbookPath && fs.existsSync(result.prebuiltWorkbookPath)) {
+      // deja genere/calcule dans process() (ex. Delivengo, qui relit ce meme
+      // classeur pour construire importRows) -> reprendre tel quel, pas relancer Excel.
+      try {
+        fs.copyFileSync(result.prebuiltWorkbookPath, wbPath);
+      } catch (e) {
+        throw explainFileError(e, wbPath);
+      }
+      try { fs.unlinkSync(result.prebuiltWorkbookPath); } catch (e) { /* ignore */ }
+      workbookMode = 'clone';
+    } else if (carrier.finalizer) {
       try {
         const scriptAbs = path.resolve(__dirname, carrier.finalizer.script);
         const templateAbs = path.resolve(__dirname, carrier.finalizer.template);
@@ -87,7 +127,9 @@ app.post('/api/process', upload.any(), async (req, res) => {
         }
       } catch (e) {
         console.warn('Finaliseur Excel KO :', String(e.stderr || e.message || '').slice(0, 300));
-        if (workbookOnly) throw e; // pas de repli exceljs possible (pas de schema d'import generique)
+        const explained = explainFileError(e, wbPath);
+        // Fichier verrouille : le repli exceljs echouerait pareil sur le meme chemin, inutile d'essayer.
+        if (workbookOnly || explained !== e) throw explained;
         await writeWorkbook({ ...result, pdfs: result.pdfs || null, carrierName: carrier.name }, wbPath);
       }
     } else {
@@ -95,8 +137,10 @@ app.post('/api/process', upload.any(), async (req, res) => {
     }
 
     const link = (name) => ({ url: `/outputs/${stamp}/${encodeURIComponent(name)}`, name });
-    const downloads = { workbook: link(wbName) };
-    if (!workbookOnly && impXlsxName) { downloads.xlsx = link(impXlsxName); downloads.csv = link(impCsvName); }
+    const downloads = {};
+    if (workbookMode !== 'none') downloads.workbook = link(wbName);
+    if (!workbookOnly && impXlsxName && !result.multiImports) { downloads.xlsx = link(impXlsxName); downloads.csv = link(impCsvName); }
+    if (multiDownloads.length) downloads.multi = multiDownloads;
     res.json({
       carrier: carrier.name,
       periode: period,

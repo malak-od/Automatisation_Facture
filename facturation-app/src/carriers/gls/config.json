@@ -7,6 +7,8 @@
   "dest_nom_col": "adresse de destination NOM",
   "poids_col": "Poids pour le traitement commande vente",
   "date_facture_col": "Date de la facture",
+  "_comment_export_brut": "Repli poids (2e niveau, apres poids brut BCF) : colonnes de l'export WMS 'Export expeditions_brut.xlsx' (meme fichier que Delivengo/Lettres), utile quand le CSV BCF GLS ne porte le poids sur aucune ligne du colis (ex. colis SURCHALL RETURN sans ligne PARCEL associee).",
+  "export_brut_cols": { "tracking": 41, "poids": 34 },
   "amount_cols_hors_gazole": ["Valeur de Base", "CSR", "PER", "prix kilos additionnel", "Saisie manuelle"],
   "amount_col_gazole": "SGO",
   "champs_fixes": { "Transporteur": "GLS", "E/P": "P", "mode envoi": "zone" },

@@ -6,8 +6,10 @@
 //  Mapping categorie -> poste : onglet "Categories" du classeur fait a la main
 //  (2026_06_Facture GLS.xlsx), confirme par la video process (mai 2025).
 // ============================================================================
+const path = require('path');
 const { readCsv, num, colIndex, roundUp1, round2 } = require('../../core/csv');
 const { validate } = require('../../core/validate');
+const { findBrutFiles, readBrutRows } = require('../../core/exportBrut');
 const cfg = require('./config.json');
 
 const POSTE_KEYS = ['ZonesEloignees', 'ColisVolumineux', 'Adresses', 'Fret', 'TaxeGasoil'];
@@ -32,6 +34,20 @@ function poidsFromPrix(prix) {
   }
   // tolerance : le prix doit etre raisonnablement proche d'un palier connu (sinon pas fiable)
   return bestDiff <= 0.05 ? best : null;
+}
+
+/** Table tracking -> poids (INFO_POIDSRETENU) a partir des lignes brutes WMS deja lues
+ * (findBrutFiles/readBrutRows, core/exportBrut). Sert de 3e repli quand le CSV BCF GLS
+ * ne porte le poids sur aucune ligne du colis. */
+function poidsParTrackingFromExport(rows) {
+  const map = new Map();
+  const { tracking: iT, poids: iP } = cfg.export_brut_cols;
+  for (const r of rows) {
+    const track = String(r[iT] || '').trim();
+    const poids = Number(r[iP]);
+    if (track && Number.isFinite(poids) && poids > 0 && !map.has(track)) map.set(track, poids);
+  }
+  return map;
 }
 
 function firstDayOfMonth(dateStr) {
@@ -65,7 +81,8 @@ function process(files) {
   const warnings = [];
   let dateValidite = null;
 
-  // 1. Regroupement par tracking (plusieurs lignes de charge par colis)
+  // 1. Regroupement par tracking (plusieurs lignes de charge par colis) -- pour le calcul
+  //    des postes ERP (Poids/Zone/TVA sont determines au niveau du colis, pas de la charge).
   const byTracking = new Map();
   rows.forEach((r, idx) => {
     const track = (r[iTracking] || '').trim();
@@ -100,57 +117,92 @@ function process(files) {
     if (!g.pays && iPays >= 0 && r[iPays]) g.pays = r[iPays].trim();
   });
 
-  // 2. Poids final + zone/TVA + lignes d'import
+  // Export expeditions brut (donnee en arriere-plan, pas un document a fournir a chaque
+  // fois -- meme fichier/convention que Delivengo/Lettres) : repli poids 3e niveau.
+  const period = dateValidite ? `${dateValidite.slice(6)}_${dateValidite.slice(3, 5)}` : null;
+  const brutPaths = period ? findBrutFiles(period, path.resolve(__dirname, '../../..')) : [];
+  const poidsExportBrut = poidsParTrackingFromExport(readBrutRows(brutPaths));
+
+  // 2. Poids final + zone/TVA par colis (poidsFinal/zone/tva partages par toutes les
+  //    charges d'un meme colis, comme dans le classeur fait a la main).
   const infos = [];
-  const recs = [];
+  const parColis = new Map(); // tracking -> { poids, zone, tva }
   for (const g of byTracking.values()) {
     let poids = g.poidsBrut > 0 ? g.poidsBrut : poidsFromPrix(g.poidsFretPrix);
+    if (poids == null && poidsExportBrut.has(g.tracking)) {
+      poids = poidsExportBrut.get(g.tracking);
+      infos.push(`${g.tracking} : poids introuvable dans le CSV BCF -> repris de l'export expeditions (INFO_POIDSRETENU = ${poids} kg)`);
+    }
     if (poids == null) {
-      infos.push(`${g.tracking} : poids introuvable (ni champ poids, ni prix reconnu dans la grille) -> plancher 0,1 applique, a verifier`);
+      infos.push(`${g.tracking} : poids introuvable (ni champ poids, ni prix reconnu dans la grille, ni export expeditions) -> plancher 0,1 applique, a verifier`);
       poids = 0.1;
     }
     const zt = cfg.zoning[g.pays] || null;
-    const zone = zt ? zt[0] : '';
+    const zone = zt ? String(zt[0]) : '';
     const tva = zt ? zt[1] : '';
     if (!zt) warnings.push(`${g.tracking} : pays '${g.pays}' absent de la table de zoning GLS`);
-
-    recs.push({
-      tracking: g.tracking, comref: g.ref, dest: g.dest, pays: g.pays, zone: String(zone),
-      poids, colis: 1, postes: g.postes,
-      horsGo: round2(POSTE_KEYS.filter((k) => k !== 'TaxeGasoil').reduce((s, k) => s + g.postes[k], 0)),
-      avecGo: round2(POSTE_KEYS.reduce((s, k) => s + g.postes[k], 0)),
-      raw: [],
-      _tva: tva,
-    });
+    parColis.set(g.tracking, { comref: g.ref, dest: g.dest, pays: g.pays, poids, zone, tva });
   }
 
-  // 3. Lignes d'import ERP
-  const importRows = recs.map((rec) => ({
-    Transporteur: cfg.champs_fixes.Transporteur,
-    DateValidite: dateValidite || '',
-    Ref1: rec.comref, Ref2: '', IdClient: '',
-    Tracking: rec.tracking, Nom: rec.dest,
-    EP: cfg.champs_fixes['E/P'], Pays: rec.pays, Zone: rec.zone,
-    NbrColis: rec.colis, Poids: roundUp1(rec.poids),
-    Mode: rec.zone, // cf. Import csv du fichier fait a la main : mode envoi = meme valeur que Zone
-    TVA: rec._tva,
-    DroitsTaxes: 0, Assurance: 0,
-    ZonesEloignees: rec.postes.ZonesEloignees, ColisVolumineux: rec.postes.ColisVolumineux,
-    Adresses: rec.postes.Adresses, Fret: rec.postes.Fret, PlusValueB2C: 0,
-    TaxeGasoil: rec.postes.TaxeGasoil, NbColis: '',
-  }));
+  // 3. Un rec PAR LIGNE DE CHARGE BRUTE (pas regroupe) : fidele a la feuille "Facture GLS"
+  //    du classeur fait a la main (plusieurs lignes par colis : Fret, Fret-avise, surcharges...).
+  const recs = [];
+  rows.forEach((r, idx) => {
+    const track = (r[iTracking] || '').trim();
+    if (!track) return;
+    const c = parColis.get(track);
+    const categorie = (r[iCategorie] || '').trim();
+    const posteGls = cfg.categorie_to_poste[categorie] || 'Fret'; // libelle "poste GLS" (colonne Categorie du classeur fait a la main)
+    const posteErp = erpPosteFor(categorie, [], `L${idx + 2} ${track}`); // warnings deja remontees au passage 1
+    const montantHG = iAmountsHG.reduce((s, i) => s + (i >= 0 ? num(r[i]) : 0), 0);
+    const gazoleLigne = iGazole >= 0 ? num(r[iGazole]) : 0;
+    const postesLigne = { ZonesEloignees: 0, ColisVolumineux: 0, Adresses: 0, Fret: 0, TaxeGasoil: gazoleLigne };
+    postesLigne[posteErp] = montantHG;
+    recs.push({
+      tracking: track, comref: c.comref, dest: c.dest, pays: c.pays, zone: c.zone,
+      poids: c.poids, colis: 1, postes: postesLigne,
+      horsGo: round2(montantHG), avecGo: round2(montantHG + gazoleLigne),
+      raw: r, _tva: c.tva, _posteGls: posteGls,
+    });
+  });
+
+  // 4. Lignes d'import ERP : 1 par colis (regroupe), comme l'ERP l'attend
+  const importRows = [...parColis.entries()].map(([tracking, c]) => {
+    const g = byTracking.get(tracking);
+    return {
+      Transporteur: cfg.champs_fixes.Transporteur,
+      DateValidite: dateValidite || '',
+      Ref1: c.comref, Ref2: '', IdClient: '',
+      Tracking: tracking, Nom: c.dest,
+      EP: cfg.champs_fixes['E/P'], Pays: c.pays, Zone: c.zone,
+      NbrColis: 1, Poids: roundUp1(c.poids),
+      Mode: c.zone, // cf. Import csv du fichier fait a la main : mode envoi = meme valeur que Zone
+      TVA: c.tva,
+      DroitsTaxes: 0, Assurance: 0,
+      ZonesEloignees: g.postes.ZonesEloignees, ColisVolumineux: g.postes.ColisVolumineux,
+      Adresses: g.postes.Adresses, Fret: g.postes.Fret, PlusValueB2C: 0,
+      TaxeGasoil: g.postes.TaxeGasoil, NbColis: '',
+    };
+  });
 
   const controle = {};
-  for (const k of POSTE_KEYS) controle[k] = round2(recs.reduce((s, r) => s + (r.postes[k] || 0), 0));
+  for (const k of POSTE_KEYS) controle[k] = round2([...byTracking.values()].reduce((s, g) => s + (g.postes[k] || 0), 0));
 
   const { alerts, infos: validateInfos } = validate(importRows);
+
+  // Feuille "Facture GLS" du classeur = fidele au fichier fait a la main : Categorie
+  // (poste GLS interne, ex. "Fret avise"), Total HT, Gazole, Total HT hors gazole, Poids,
+  // suivies des colonnes brutes du CSV BCF (rec.raw, colle par writeWorkbook()).
+  const rawCompCols = ['Catégorie', 'Total HT', 'Gazole', 'Total HT hors gazole', 'Poids'];
+  const rawCompRow = (rec) => [rec._posteGls, rec.avecGo, rec.postes.TaxeGasoil, rec.horsGo, rec.poids];
 
   return {
     header, rows, recs, importRows, controle, warnings, alerts,
     infos: [...infos, ...validateInfos],
     posteKeys: POSTE_KEYS, gazoleKey: 'TaxeGasoil', cfg,
     sheetNames: { raw: 'Facture GLS', import: 'Import csv' },
-    period: dateValidite ? `${dateValidite.slice(6)}_${dateValidite.slice(3, 5)}` : 'export',
+    rawCompCols, rawCompRow,
+    period: period || 'export',
   };
 }
 
@@ -158,10 +210,22 @@ module.exports = {
   id: 'gls',
   name: 'GLS',
   status: 'ready',
-  taxeGasoil: 'Calculee ligne a ligne dans le CSV (colonne SGO), pas besoin du PDF',
-  method: "CSV BCF GLS (1 ligne = 1 charge). Regroupement par Numero de colis, reclassement via categorie 'Hierarchie produits' (table de correspondance GLS -> poste), poids depuis le champ brut ou deduit du prix de base (grille PA GLS), zone/TVA par pays.",
+  taxeGasoil: 'Calculee ligne a ligne dans le CSV (colonne SGO) ; le PDF sert a la reconciliation TTC, pas au calcul du gazole.',
+  // Nomenclature des sorties (comme le fichier fait a la main). {period} = AAAA_MM.
+  outputNaming: { workbook: '{period}_Facture GLS', import: '{period}_GLS_Import' },
+  // Classeur de controle = CLONE FIDELE du fichier fait a la main (11 feuilles, formules,
+  // 5 TCD/pivots) via Excel COM (Python). Le modele est le fichier existant, rafraichi.
+  // Le PDF (facture officielle GLS) sert a la reconciliation TTC dans "Bilan factures"
+  // (video process : verification visuelle TTC calcule vs "Montant T.T.C." du PDF).
+  finalizer: {
+    script: '../automatisation/finaliser_gls.py',
+    template: '../Transporteurs/GLS/2026_06_Facture GLS.xlsx',
+    buildArgs: (files) => [...(files.csv || []), '--pdf', ...(files.pdf || [])],
+  },
+  method: "CSV BCF GLS (1 ligne = 1 charge). Regroupement par Numero de colis, reclassement via categorie 'Hierarchie produits' (table de correspondance GLS -> poste), poids depuis le champ brut ou deduit du prix de base (grille PA GLS), en dernier repli depuis l'export expeditions du mois/mois-1 (INFO_POIDSRETENU, recupere automatiquement dans Automatisation/, pas a fournir), zone/TVA par pays.",
   inputs: [
     { key: 'csv', label: 'Export BCF GLS (CSV)', accept: '.csv', multiple: true, required: true },
+    { key: 'pdf', label: 'Facture PDF GLS — pour reconciliation TTC', accept: '.pdf', multiple: true, required: false },
   ],
   process,
 };

@@ -19,10 +19,17 @@ function fmtCsv(v) {
   return String(v);
 }
 
+/** Fichiers import (csv/xlsx) tries par tracking, pour tous les transporteurs -- le
+ * CLASSEUR, lui, garde l'ordre du fichier source (ecrit a part, non affecte ici). */
+function sortByTracking(importRows) {
+  return [...importRows].sort((a, b) => String(a.Tracking || '').localeCompare(String(b.Tracking || ''), undefined, { numeric: true }));
+}
+
 /** Import CSV (latin-1, ';', decimale virgule). */
 function writeImportCsv(importRows, filePath) {
+  const rows = sortByTracking(importRows);
   const lines = [IMPORT_COLUMNS.map((c) => c.label).join(';')];
-  for (const o of importRows) lines.push(IMPORT_COLUMNS.map((c) => fmtCsv(cellValue(o, c))).join(';'));
+  for (const o of rows) lines.push(IMPORT_COLUMNS.map((c) => fmtCsv(cellValue(o, c))).join(';'));
   fs.writeFileSync(filePath, Buffer.from(lines.join('\r\n'), 'latin1'));
 }
 
@@ -33,10 +40,11 @@ function sheetName(name) {
 
 /** Import XLSX = valeurs seules (le fichier a deposer dans l'ERP). */
 async function writeImportXlsx(importRows, filePath, importSheetName = 'Import') {
+  const rows = sortByTracking(importRows);
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet(sheetName(importSheetName));
   ws.addRow(IMPORT_COLUMNS.map((c) => c.label));
-  for (const o of importRows) {
+  for (const o of rows) {
     ws.addRow(IMPORT_COLUMNS.map((c) => {
       const v = cellValue(o, c);
       return c.num ? (v === '' ? null : v) : (v === '' ? null : String(v));
@@ -118,18 +126,24 @@ async function writeWorkbook(result, filePath) {
   const importSheetName = sn.import || `${carrierName}_Import`;
   const wb = new ExcelJS.Workbook();
 
-  // Feuille brute : 8 postes + donnees du transporteur
+  // Feuille brute : colonnes de controle + donnees du transporteur. Par defaut = structure
+  // Kuehne (le fait-main de reference pour ce format) ; un transporteur avec une structure
+  // differente (ex. GLS : pas de Droits et taxes/Assurance/Plus value B2C, mais Zones
+  // eloignees/Colis volumineux/Adresses/Fret/Gazole) fournit son propre result.rawCompCols
+  // (liste de libelles) + result.rawCompRow(rec) (valeurs correspondantes).
   const fk = wb.addWorksheet(sheetName(rawSheetName));
-  const comp = ['ID Client', 'Tracking', 'Total hors GO', 'Total + GO', 'Droits et taxes', 'Assurance', 'Zones eloignees', 'Colis volumineux', 'Adresses', 'Fret', 'Plus value B2C', 'Gazole'];
-  fk.addRow(comp.concat(header));
   const z = (v) => (v === 0 ? null : v); // cellule VIDE si pas de valeur (au lieu de 0,00)
-  for (const rec of recs) {
+  const compCols = result.rawCompCols || ['ID Client', 'Tracking', 'Total hors GO', 'Total + GO', 'Droits et taxes', 'Assurance', 'Zones eloignees', 'Colis volumineux', 'Adresses', 'Fret', 'Plus value B2C', 'Gazole'];
+  const compRow = result.rawCompRow || ((rec) => {
     const p = rec.postes;
     // Vide si 0 : Droits et taxes -> Adresses. On GARDE les 0 pour Plus value B2C et Gazole.
-    const line = [null, rec.tracking, rec.horsGo, rec.avecGo,
+    return [null, rec.tracking, rec.horsGo, rec.avecGo,
       z(p['Droits et taxes']), z(p.Assurance), z(p['Zones eloignees']), z(p['Colis volumineux']), z(p.Adresses),
       p.Fret, p['Plus value B2C'], p.Gazole];
-    fk.addRow(line.concat(rec.raw.map((v) => (v === '' ? null : v))));
+  });
+  fk.addRow(compCols.concat(header));
+  for (const rec of recs) {
+    fk.addRow(compRow(rec).concat(rec.raw.map((v) => (v === '' ? null : v))));
   }
 
   // Feuille TCD : consolidation par tracking (statique ; version vivante via Excel COM cote Python)

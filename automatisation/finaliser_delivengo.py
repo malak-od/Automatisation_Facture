@@ -12,10 +12,11 @@ Mapping export -> onglet "Fichier import" :
   X Pays (nom)       <- "Destinataire pays"      P Droits&taxes  = poids export brut (recherchex tracking)
   I E/P              = E si raison sociale, sinon P
   B/C/N/L/U          = constants (DELIVENGO-LPPQ / 1er du mois / avecsuivi / 1 / 1)
-  J,K,M,O,W          = FORMULES (recherche table Pays)   Q Assurance = poids Delivengo (export) / 1000
-  P/Q ne sont que des colonnes de calcul intermediaire (servent a M = MAX(P,Q)) :
-  en fin de traitement, "Dans le fichier import" (p.14) demande de les vider, de
-  vider W (Taxe Gasoil, "Pas de TG") si 0, et de vider F (Statut) -> apply_final_cleanup().
+  J,K,M,O,W          = FORMULES (recherche table Pays)   Q Assurance = poids export du suivi (colonne Poids) / 1000
+  Dans le CLASSEUR (cet onglet), P et Q RESTENT remplies (servent aussi a M = MAX(P,Q)).
+  Le fichier import ERP separe (23 colonnes standard), lui, remet DroitsTaxes/Assurance
+  a 0 -- cf. index.js. En fin de traitement : vider W (Taxe Gasoil, "Pas de TG") si 0,
+  et vider F (Statut) -> apply_final_cleanup().
 
 Necessite : Windows + Excel + pywin32 + pandas + xlrd.
 Usage : python finaliser_delivengo.py "<modele.xlsx>" "<sortie.xlsx>" "<export.xls>"
@@ -95,10 +96,11 @@ def build_block(rows, brut_map):
     for r in rows:
         ep = "P"  # constante Delivengo (B2C) : fait-main = P sur 935/935, meme avec raison sociale
         track = str(r[X_SUIVI]).strip()
-        poids_reel = brut_map.get(normalize_track(track))  # kg, apparie par tracking
+        poids_reel = brut_map.get(normalize_track(track))  # kg, apparie par tracking (P)
+        poids_suivi = round(num(r[X_POIDS]) / 1000.0, 3) if len(r) > X_POIDS and str(r[X_POIDS]).strip() else None  # kg, export du suivi (Q)
         if poids_reel is not None:
             nb_reel += 1
-        else:
+        elif not poids_suivi:  # ni P (brut WMS) ni Q (export suivi) : la un vrai plancher 0,15 est applique
             manquants.append(track)
         line = [None] * 24
         line[0] = str(r[X_REMISE]).strip()           # A Date remise (TEXTE, comme le modele)
@@ -111,17 +113,20 @@ def build_block(rows, brut_map):
         line[11] = 1                                 # L Nbr Colis
         line[13] = "avecsuivi"                       # N mode envoi
         line[15] = poids_reel if poids_reel is not None else 0.15  # P Droits et taxes (scratch) = poids export brut (recherchex) ; plancher 0,15 kg si absent
-        line[16] = round(num(r[X_POIDS]) / 1000.0, 3) if len(r) > X_POIDS else None  # Q Assurance (scratch) = poids Delivengo propre / 1000
+        line[16] = poids_suivi  # Q Assurance (scratch) = poids export du suivi (colonne Poids) / 1000
         line[20] = 1                                 # U Fret
         line[23] = str(r[X_PAYS]).strip()            # X Pays (nom)
         block.append(line)
     return block, date_valid, nb_reel, manquants
 
 def apply_final_cleanup(ws, newLast):
-    """Etape finale p.14 "Dans le fichier import" : P/Q ne sont que des colonnes de
-    calcul (servent a M = MAX(P,Q)) et ne doivent pas se retrouver dans le livrable :
-      - geler M et W (formules) en valeurs AVANT de vider P/Q (sinon M recalculerait a 0)
-      - vider Droits et taxes (P) + Assurance (Q)
+    """Etape finale p.14 "Dans le fichier import" -- pour le CLASSEUR (onglet "Fichier
+    import") : P (Droits et taxes) et Q (Assurance) RESTENT remplies (poids brut WMS /
+    poids export du suivi /1000). Seul le fichier import ERP separe (23 colonnes
+    standard) force ses colonnes DroitsTaxes/Assurance a 0, independamment (cf.
+    index.js/HEADER_TO_KEY, applique a la lecture) :
+      - geler M et W (formules) en valeurs (sinon M/W resteraient des formules figees
+        sur un classeur qui peut etre rouvert hors de ce script)
       - Taxe gasoil (W) : "Pas de TG" -> vider si 0
       - Statut (F) : toujours vide (info operationnelle interne, pas destinee a l'import)
     """
@@ -137,7 +142,6 @@ def apply_final_cleanup(ws, newLast):
         v = rowv[0] if isinstance(rowv, (tuple, list)) else rowv
         if v in (0, None, ""):
             retry(lambda i=i: ws.Cells(2 + i, 23).ClearContents())
-    retry(lambda: ws.Range(ws.Cells(2, 16), ws.Cells(newLast, 17)).ClearContents())  # P Droits et taxes + Q Assurance
     retry(lambda: ws.Range(ws.Cells(2, 6), ws.Cells(newLast, 6)).ClearContents())    # F Statut
 
 def retry(fn, tries=8, delay=0.6):

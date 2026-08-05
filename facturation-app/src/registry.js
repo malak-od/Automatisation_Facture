@@ -13,6 +13,7 @@ const gls = require('./carriers/gls');
 const geodis = require('./carriers/geodis');
 const mondialRelay = require('./carriers/mondial_relay');
 const ceva = require('./carriers/ceva');
+const lettres = require('./carriers/lettres');
 
 function planned(meta) {
   return {
@@ -43,15 +44,12 @@ const PLANNED = [
   { id: 'tnt', name: 'TNT', taxeGasoil: 'Facture PDF (taux officiel)',
     method: "Etendre colonnes, ajouter les postes, MAJ TCD, NE PAS convertir les trackings en nombre, verifier tarifs via surcharge carburant PDF.",
     inputs: [{ key: 'facture', label: 'Facture TNT', accept: '.xlsx,.csv', multiple: false, required: true }] },
-  { id: 'lettres', name: 'Lettres (Suivie / Prepa / SLAACE)', taxeGasoil: 'Pas de TG',
-    method: "Directement dans le CSV d'import : filtrer expedition brute par lettre, corriger transporteur si tracking = UPS/MR/GLS, 3 fichiers (SLAACE Allemagne, Suivie, Prepa).",
-    inputs: [{ key: 'export', label: 'Export expedition brute', accept: '.csv,.xlsx', multiple: true, required: true }] },
   { id: 'bls', name: 'BLS', viticolis: true, taxeGasoil: 'A definir',
     method: "Pas encore demarre. Verifier que les trackings sont dans l'ERP (rapprochement fichier affretement), copier facture BLS, MAJ TCD, comparer ecart PDF.",
     inputs: [{ key: 'facture', label: 'Facture BLS', accept: '.xlsx,.csv', multiple: false, required: true }] },
 ];
 
-const carriers = [kuehne, delivengo, dpd, gls, geodis, mondialRelay, ceva, ...PLANNED.map(planned)];
+const carriers = [kuehne, delivengo, dpd, gls, geodis, mondialRelay, ceva, lettres, ...PLANNED.map(planned)];
 const byId = Object.fromEntries(carriers.map((c) => [c.id, c]));
 
 /** Metadonnees publiques (pour l'UI), sans exposer process(). */

@@ -33,7 +33,10 @@ function findHeaderRow(rows) {
 }
 
 function readRows(path) {
-  const wb = XLSX.readFile(path, { raw: true });
+  // cellDates:true -> les cellules "Date" (ex. Facturation_client.xlsx) reviennent en
+  // objet Date JS, pas en numero de serie Excel (sinon firstDayOfMonth() ne matche rien
+  // et DateValidite reste vide sur TOUTES les lignes -> "DATE manquante" partout).
+  const wb = XLSX.readFile(path, { raw: true, cellDates: true });
   for (const sheetName of wb.SheetNames) {
     const ws = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
@@ -46,9 +49,21 @@ function readRows(path) {
   throw new Error(`Format de fichier non reconnu (colonne "${cfg.recepisse_col}" introuvable dans aucune feuille) : ce n'est probablement pas un export Geodis valide.`);
 }
 
+// Normalise pour comparaison : accents + "," / "." traites comme equivalents.
+// Vu entre exports Geodis (ex. "RV tel," vs "RV tel." dans Facturation_client.xlsx,
+// qui a fait perdre 5 colonnes de Fret en silence -> ~5,70EUR sur ~10 lignes).
+function normKey(s) {
+  return String(s || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // accents
+    .toLowerCase().replace(/[.,]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 function idx(header, name) {
   const i = header.indexOf(name);
   if (i >= 0) return i;
+  const target = normKey(name);
+  const exact = header.findIndex((h) => h && normKey(h) === target);
+  if (exact >= 0) return exact;
   return header.findIndex((h) => h && h.includes(name));
 }
 
@@ -196,5 +211,12 @@ module.exports = {
     { key: 'facture', label: 'Facture Geodis (xlsx/csv)', accept: '.xlsx,.csv', multiple: true, required: true },
     { key: 'pdf', label: 'Facture(s) PDF Geodis (controle du total)', accept: '.pdf', multiple: true, required: false },
   ],
+  // Classeur = CLONE FIDELE du fichier fait a la main (Excel COM/Python), comme Kuehne/Delivengo.
+  outputNaming: { workbook: '{period}_Facture Geodis', import: '{period}_Geodis_Import' },
+  finalizer: {
+    script: '../automatisation/finaliser_geodis.py',
+    template: '../Transporteurs/Geodis/2026_06_Facture Geodis.xlsx',
+    buildArgs: (files) => [...(files.facture || []), '--pdf', ...(files.pdf || [])],
+  },
   process,
 };
