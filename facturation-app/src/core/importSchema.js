@@ -22,8 +22,8 @@ const IMPORT_COLUMNS = [
   { key: 'Adresses',        label: ' Adresses ',           num: true  },
   { key: 'Fret',            label: '    Frêt    ',         num: true  },
   { key: 'PlusValueB2C',    label: ' plus-value BtoC ',    num: true  },
-  { key: 'TaxeGasoil',      label: 'Taxe Gasoil',          num: false },
-  { key: 'NbColis',         label: ' Nb colis ',           num: false },
+  { key: 'TaxeGasoil',      label: 'Gazole',               num: false },
+  { key: 'NbColis',         label: 'Nb Colis',             num: false },
 ];
 
 module.exports = { IMPORT_COLUMNS };

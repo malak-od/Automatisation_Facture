@@ -12,7 +12,9 @@ function validate(importRows, opts = {}) {
 
     // -- Champs obligatoires sur toutes les lignes --
     if (!o.Transporteur) alerts.push(`L${l} ${t}: TRANSPORTEUR manquant`);
-    if (!o.EP) alerts.push(`L${l} ${t}: E/P manquant`);
+    // E/P manquant : pas d'alerte affichee (bruit trop frequent, notamment Geodis),
+    // mais la ligne reste traitee normalement -- rien d'autre a changer, validate()
+    // ne modifie jamais importRows.
     if (!o.DateValidite) alerts.push(`L${l} ${t}: DATE manquante`);
     if (!o.Tracking) alerts.push(`L${l}: N° TRACKING manquant`);
     if (!o.Pays) alerts.push(`L${l} ${t}: PAYS manquant`);

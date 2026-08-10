@@ -12,21 +12,47 @@ un rapport client type "Facturation_client.xlsx" (memes colonnes mais entete
 decalee de quelques lignes de titre) -> l'entete est detectee dynamiquement
 (recherche de "N recepisse"), comme cote Node (src/carriers/geodis/index.js).
 
-ATTENTION (cf. FACTURATION EXCEL.pdf p.3) : les formules de "Factures Geodis"
-referencent des POSITIONS de colonnes fixes (ex. =CS2+CT2+CU2), pas des noms.
-Si les colonnes du fichier recu ne sont pas EXACTEMENT dans le meme ordre que
-le modele, on arrete avec une erreur explicite plutot que de facturer sur les
-mauvaises colonnes en silence.
+ATTENTION (cf. FACTURATION EXCEL.pdf p.3) : les colonnes brutes Geodis se
+decalent d'un mois a l'autre (colonne ajoutee/retiree/renommee legerement).
+Les 8 postes ERP (colonnes F->M de "Factures Geodis") ne sont donc PAS colles
+avec des formules a positions fixes (=CS2+CT2+CU2) : on colle l'entete recu
+TEL QUEL (avec le style bleu du modele) a partir de la colonne N, PUIS on
+reconstruit les formules F->M en cherchant CHAQUE colonne par NOM dans cet
+entete (postes_from_columns du config.json Node, source unique de verite,
+partagee avec facturation-app/src/carriers/geodis/config.json). Une colonne
+de poste introuvable ce mois-ci est ignoree dans la somme (poste calcule sur
+les colonnes presentes) + avertissement -- jamais bloquant, coherent avec le
+comportement Node (idx() -> -1, colonne juste ignoree).
 
 Necessite : Windows + Excel + pywin32 + openpyxl.
 Usage :
   python finaliser_geodis.py "<modele.xlsx>" "<sortie.xlsx>" "<entree1>" [<entree2>...] [--pdf-taxable N] [--frais-gestion N]
 """
-import sys, os, shutil, re, csv
+import sys, os, shutil, re, csv, json
 
 FIRST_RAW_COL = 14  # colonne N : debut des donnees brutes Geodis dans "Factures Geodis"
-LAST_FORMULA_COL_FACTURES = 13  # colonnes A->M = postes calcules (formules a etendre)
 LAST_COL_IMPORT_CSV = 23        # Import CSV : colonnes A->W (Gazole/NbColis compris, meme si vides)
+HEADER_FILL_ARGB = "FF3200E6"   # bleu du modele (colonnes N+, ligne 1)
+HEADER_FONT_ARGB = "FFFFFFFF"   # texte blanc
+
+# Colonnes de "Factures Geodis" -> cle postes_from_columns (config.json Node).
+# L/A/B/C/D/E n'ont pas de somme de colonnes nommees (formules fixes du modele,
+# non touchees : Recepisse=RIGHT(V,8), Total hors GO=SUM(F:L), Total+GO=D+M).
+POSTE_COLS = {
+    "F": "DroitsTaxes", "G": "Assurance", "H": "ZonesEloignees", "I": "ColisVolumineux",
+    "J": "Adresses", "K": "Fret", "L": "PlusValueB2C", "M": "Gazole",
+}
+
+
+def load_postes_from_columns():
+    """Lit postes_from_columns depuis le config.json Node (source unique de
+    verite, deja utilise par src/carriers/geodis/index.js -> pas de liste
+    dupliquee/desynchronisable entre les deux implementations)."""
+    cfg_path = os.path.join(os.path.dirname(__file__), "..", "facturation-app",
+                             "src", "carriers", "geodis", "config.json")
+    with open(cfg_path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    return cfg["postes_from_columns"]
 
 
 def normalize_header(h):
@@ -131,7 +157,22 @@ def coerce(v):
     reference/code, pas une quantite -- le convertir perdrait les zeros de
     tete de maniere irreversible (float n'a pas de notion de zero non
     significatif conserve). Reste texte, comme dans le classeur fait a la
-    main (colonne Ref.1)."""
+    main (colonne Ref.1).
+    datetime/date -> NOMBRE SERIEL Excel (jours depuis 1899-12-30, meme epoque
+    que Excel) : passer un datetime.datetime naif directement a une propriete
+    COM Value le fait repasser par le fuseau horaire LOCAL de la machine lors
+    de la conversion en PyTime (pywin32), ce qui peut faire glisser la date
+    d'un jour (ex. 31/07 00:00 -> 30/07 22:00 constate). Une chaine 'JJ/MM/AAAA'
+    est ambigue aussi (Excel COM ne la reconvertit pas forcement en date meme
+    si la cellule est deja au format Date) -> le nombre seriel est la seule
+    valeur non ambigue, la cellule (deja au format dd/mm/yyyy dans le modele)
+    l'affiche nativement comme une date."""
+    import datetime as _dt
+    EXCEL_EPOCH = _dt.datetime(1899, 12, 30)
+    if isinstance(v, _dt.datetime):
+        return (v - EXCEL_EPOCH).total_seconds() / 86400
+    if isinstance(v, _dt.date):
+        return (_dt.datetime(v.year, v.month, v.day) - EXCEL_EPOCH).days
     if v is None or v == "":
         return None
     if isinstance(v, (int, float)):
@@ -146,27 +187,45 @@ def coerce(v):
     return v
 
 
-def check_columns(header, modele_path):
-    """Compare l'entete recue aux colonnes attendues par le modele (a partir
-    de FIRST_RAW_COL) : meme nombre, memes noms, MEME ORDRE."""
+def argb_to_com_bgr(argb):
+    """'FF3200E6' (ARGB hex, format openpyxl) -> entier BGR attendu par
+    Range.Interior.Color / Font.Color en COM (B*65536 + G*256 + R)."""
+    r, g, b = int(argb[2:4], 16), int(argb[4:6], 16), int(argb[6:8], 16)
+    return b * 65536 + g * 256 + r
+
+
+def col_letter(idx0):
+    """Index 0-based (0=A) -> lettre(s) de colonne Excel."""
     import openpyxl
-    wb = openpyxl.load_workbook(modele_path, data_only=True)
-    ws = wb["Factures Geodis"]
-    expected = [normalize_header(ws.cell(row=1, column=c).value) for c in range(FIRST_RAW_COL, ws.max_column + 1)]
-    wb.close()
-    got = header[:len(expected)]
-    if [compare_key(g) for g in got] != [compare_key(e) for e in expected]:
-        diffs = [f"  colonne {i + 1} : attendu {e!r}, reçu {g!r}"
-                 for i, (e, g) in enumerate(zip(expected, got)) if compare_key(e) != compare_key(g)]
-        extra = ""
-        if len(header) != len(expected):
-            extra = f"\n  (nombre de colonnes : attendu {len(expected)}, reçu {len(header)})"
-        raise RuntimeError(
-            "Colonnes du fichier d'entrée différentes du modèle (FACTURATION EXCEL.pdf p.3 : "
-            "« attention quand copie/colle vérifier même nombre de colonnes et le nom des colonnes ») :\n"
-            + "\n".join(diffs[:10]) + extra
-        )
-    return expected
+    return openpyxl.utils.get_column_letter(idx0 + 1)
+
+
+def build_poste_formulas(header, first_raw_col):
+    """Pour chaque poste ERP (colonnes F->M), cherche ses colonnes nommees
+    (postes_from_columns) DANS L'ENTETE REEL recu ce mois-ci -> renvoie
+    { "F": "=X2+Y2+...", ... } avec les BONNES lettres de colonnes pour ce
+    fichier (peuvent differer du modele si des colonnes ont ete ajoutees/
+    retirees/decalees). Une colonne de poste introuvable ce mois-ci est
+    ignoree dans la somme (poste = 0 si aucune colonne trouvee) ; les noms
+    manquants sont retournes a part pour avertissement, jamais bloquant."""
+    postes_from_columns = load_postes_from_columns()
+    key_by_pos = {compare_key(h): i for i, h in enumerate(header)}
+    formulas, missing = {}, {}
+    for col, poste_key in POSTE_COLS.items():
+        names = postes_from_columns.get(poste_key, [])
+        letters = []
+        not_found = []
+        for name in names:
+            i = key_by_pos.get(compare_key(name))
+            if i is None:
+                not_found.append(name)
+            else:
+                letters.append(col_letter(first_raw_col - 1 + i))
+        if letters:
+            formulas[col] = "=" + "+".join(f"{L}{{row}}" for L in letters)
+        if not_found:
+            missing[poste_key] = not_found
+    return formulas, missing
 
 
 def extract_pdf_totals(pdf_paths):
@@ -266,11 +325,18 @@ def main():
     shutil.copyfile(modele, sortie)  # on ne touche JAMAIS au modele
 
     header, rows = read_input(inputs)
-    check_columns(header, modele)
     n = len(rows)
     ncol = len(header)
     data = [[coerce(v) for v in (list(r) + [None] * ncol)[:ncol]] for r in rows]
     print(f"Entrée : {n} lignes x {ncol} colonnes")
+
+    # Formules F->M reconstruites par NOM de colonne (pas position fixe) : robuste
+    # si le fichier recu ce mois-ci a une colonne en plus/moins/decalee vs le
+    # modele (cf. FACTURATION EXCEL.pdf p.3, confirme avril vs juin vs juillet).
+    poste_formulas, missing_cols = build_poste_formulas(header, FIRST_RAW_COL)
+    for poste_key, names in missing_cols.items():
+        print(f"AVERTISSEMENT: colonne(s) introuvable(s) pour le poste {poste_key} "
+              f"(ignorée(s) dans la somme, calculé sur les colonnes présentes) : {names}")
 
     pdf_taxable, frais_gestion = extract_pdf_totals(pdf_paths) if pdf_paths else (None, None)
 
@@ -285,18 +351,34 @@ def main():
         if wb is None:
             raise RuntimeError("Excel n'a pas pu ouvrir le fichier (déjà ouvert ? verrouillé ?)")
 
-        # 1) Feuille "Factures Geodis" : purge + collage des données brutes (colonne N+)
+        # 1) Feuille "Factures Geodis" : purge (entete + donnees, colonne N+ jusqu'a la
+        #    fin de l'ancien contenu -> l'entete du fichier recu peut avoir moins/plus
+        #    de colonnes que le modele), puis collage entete (avec le style bleu du
+        #    modele, reapplique explicitement) + donnees brutes telles quelles.
         ws = wb.Sheets("Factures Geodis")
+        oldLastCol = ws.Cells(1, ws.Columns.Count).End(-4159).Column  # -4159 = xlToLeft, depuis la derniere colonne
         lastCol = FIRST_RAW_COL + ncol - 1
         oldLast = ws.Cells(ws.Rows.Count, FIRST_RAW_COL).End(xlUp).Row
         newLast = 1 + n
         maxLast = max(oldLast, newLast)
-        retry(lambda: ws.Range(ws.Cells(2, FIRST_RAW_COL), ws.Cells(maxLast, lastCol)).ClearContents())
+        maxCol = max(oldLastCol, lastCol)
+        retry(lambda: ws.Range(ws.Cells(1, FIRST_RAW_COL), ws.Cells(maxLast, maxCol)).ClearContents())
+        retry(lambda: ws.Range(ws.Cells(1, FIRST_RAW_COL), ws.Cells(1, lastCol)).__setattr__("Value", [header]))
+        headerRange = ws.Range(ws.Cells(1, FIRST_RAW_COL), ws.Cells(1, lastCol))
+        headerRange.Interior.Color = argb_to_com_bgr(HEADER_FILL_ARGB)
+        headerRange.Font.Color = argb_to_com_bgr(HEADER_FONT_ARGB)
         retry(lambda: ws.Range(ws.Cells(2, FIRST_RAW_COL), ws.Cells(newLast, lastCol)).__setattr__("Value", data))
-        # 2) Étendre les formules des 13 postes calculés (colonnes A->M)
-        retry(lambda: ws.Range(ws.Cells(2, 1), ws.Cells(newLast, LAST_FORMULA_COL_FACTURES)).FillDown())
+        # 2) Reconstruire les formules des postes calcules (colonnes F->M) ligne a
+        #    ligne, avec les lettres de colonnes resolues pour CE fichier -> puis
+        #    etendre A/B/C/D/E (formules fixes du modele : Recepisse/Total hors GO/
+        #    Total+GO) par recopie normale.
+        for col, tmpl in poste_formulas.items():
+            colIdx = ord(col) - ord("A") + 1
+            retry(lambda c=colIdx, t=tmpl: ws.Range(ws.Cells(2, c), ws.Cells(newLast, c))
+                  .__setattr__("Formula", [[t.format(row=r)] for r in range(2, newLast + 1)]))
+        retry(lambda: ws.Range(ws.Cells(2, 1), ws.Cells(newLast, 5)).FillDown())
         if newLast < oldLast:
-            retry(lambda: ws.Range(ws.Cells(newLast + 1, 1), ws.Cells(oldLast, lastCol)).ClearContents())
+            retry(lambda: ws.Range(ws.Cells(newLast + 1, 1), ws.Cells(oldLast, maxCol)).ClearContents())
 
         # 3) Onglet "Import CSV" : formules cross-feuille (référencent 'Factures Geodis'
         #    ligne à ligne) -> étendre pareil, sur le même nombre de lignes.

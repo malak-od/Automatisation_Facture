@@ -29,10 +29,12 @@
       "Livraison le matin (HT)", "Livraison à date fixe (HT)", "Livraison à l'étage (HT)", "Mise en lieu d'ut, (HT)",
       "Dépotage (HT)", "Echange à la livraison (HT)", "Remise d'un BL au desti, (HT)", "Signature sur BL client (HT)",
       "Marchandises Dang, ADR (HT)", "Marchandises Dang, LQEQ (HT)", "Vins & Spiritueux (HT)", "Suivi au colis (HT)",
-      "LC2 - LIVRAISON SUR CRENEAU HORAIRE  (HT)", "LCS - LIVRAISON A HEURE DETERMINEE  (HT)"
+      "LC2 - LIVRAISON SUR CRENEAU HORAIRE  (HT)", "LCS - LIVRAISON A HEURE DETERMINEE  (HT)",
+      "MAUT - MAUT (HT)"
     ],
     "PlusValueB2C": [],
     "Gazole": ["Surcharge Carburant (HT)"]
   },
-  "_note_double_compte": "'Expedition Hors Norme (HT)' est comptee A LA FOIS dans ColisVolumineux et dans Fret dans le classeur original (verifie sur les formules D9 et K11) -> reproduit a l'identique, pas corrige unilateralement (a confirmer avec le metier si c'est voulu)."
+  "_note_double_compte": "'Expedition Hors Norme (HT)' est comptee A LA FOIS dans ColisVolumineux et dans Fret dans le classeur original (verifie sur les formules D9 et K11) -> reproduit a l'identique, pas corrige unilateralement (a confirmer avec le metier si c'est voulu).",
+  "_note_maut": "Colonne 'MAUT - MAUT (HT)' (taxe autoroutiere Allemagne) absente du modele de juin, apparue en juillet a la place de LC2/LCS -> classee dans Fret : verifie sur le tracking 97295204 (473,01 EXO Transport + 2,60 Participation Surete + 32,54 MAUT = 508,15, exactement le montant de la facture faite a la main ; sans MAUT le calcul donnait 475,61, en dessous)."
 }

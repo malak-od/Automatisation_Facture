@@ -12,6 +12,7 @@ const XLSX = require('xlsx');
 const pdfParse = require('pdf-parse');
 const { num, roundUp1, round2 } = require('../../core/csv');
 const { validate } = require('../../core/validate');
+const { findBrutFiles, readBrutRows, epParTrackingFromExport } = require('../../core/exportBrut');
 const cfg = require('./config.json');
 
 const POSTE_KEYS = ['DroitsTaxes', 'Assurance', 'ZonesEloignees', 'ColisVolumineux', 'Adresses', 'Fret', 'PlusValueB2C', 'Gazole'];
@@ -151,18 +152,28 @@ async function process(files) {
     };
   }).filter((rec) => rec.tracking);
 
+  // E/P non fiable dans le fichier Geodis lui-meme -> repli sur l'export expeditions
+  // du mois/mois-1 (donnee en arriere-plan, pas a fournir -> cf. core/exportBrut.js),
+  // colonne DES_PARTICULIER (particulier/entreprise/point relais) via PRO_TRACKING.
+  const periodeEp = dateValidite ? `${dateValidite.slice(6)}_${dateValidite.slice(3, 5)}` : null;
+  const brutPathsEp = periodeEp ? findBrutFiles(periodeEp, path.resolve(__dirname, '../../..')) : [];
+  const epParTracking = epParTrackingFromExport(readBrutRows(brutPathsEp));
+
   const importRows = recs.map((rec) => ({
     Transporteur: cfg.champs_fixes.Transporteur,
     DateValidite: dateValidite || '',
     Ref1: rec.comref, Ref2: '', IdClient: '',
     Tracking: rec.tracking, Nom: rec.dest,
-    EP: cfg.champs_fixes['E/P'], Pays: rec.pays, Zone: rec.zone,
+    EP: epParTracking.get(rec.tracking) || cfg.champs_fixes['E/P'], Pays: rec.pays, Zone: rec.zone,
     NbrColis: Math.round(rec.colis), Poids: roundUp1(rec.poids),
     Mode: cfg.champs_fixes['mode envoi'], TVA: cfg.champs_fixes.tva,
     DroitsTaxes: rec.postes.DroitsTaxes, Assurance: rec.postes.Assurance,
     ZonesEloignees: rec.postes.ZonesEloignees, ColisVolumineux: rec.postes.ColisVolumineux,
     Adresses: rec.postes.Adresses, Fret: rec.postes.Fret,
-    PlusValueB2C: rec.postes.PlusValueB2C, TaxeGasoil: rec.postes.Gazole,
+    // Gazole calcule et affiche a l'ecran (verification/reconciliation PDF), mais
+    // PAS transmis a l'ERP pour Geodis -> colonne laissee vide dans l'import final
+    // (cf. REGLES_DE_BASE.md : "Gazole a rajouter sur l'ERP" par un autre biais).
+    PlusValueB2C: rec.postes.PlusValueB2C, TaxeGasoil: '',
     NbColis: '',
   }));
 
@@ -185,6 +196,8 @@ async function process(files) {
   const fraisFixe = (pdfs.find((p) => p.fraisGestion != null) || {}).fraisGestion ?? cfg.frais_tenue_compte_mensuel ?? 0;
 
   const { alerts, infos } = validate(importRows);
+  const nbEpResolus = recs.filter((rec) => epParTracking.has(rec.tracking)).length;
+  if (nbEpResolus) infos.push(`E/P résolu pour ${nbEpResolus} colis via l'export expéditions (colonne DES_PARTICULIER : particulier -> P, entreprise/point relais -> E).`);
   const totalCalcule = round2(POSTE_KEYS.reduce((s, k) => s + (controle[k] || 0), 0) + fraisFixe);
   if (fraisFixe) infos.push(`Frais de tenue de compte GEODIS (${fraisFixe.toFixed(2)} EUR/mois, sans tracking) a ajouter manuellement -> total facture attendu = ${totalCalcule.toFixed(2)} EUR HT`);
   for (const p of pdfs) {
@@ -206,7 +219,7 @@ module.exports = {
   status: 'ready',
   viticolis: true,
   taxeGasoil: 'Calculee ligne a ligne (colonne Surcharge Carburant) ; le PDF sert a controler le total, pas a la calculer',
-  method: "Fichier Facture Geodis (xlsx/csv, ~100 colonnes). ATTENTION : les colonnes se decalent d'un mois a l'autre (confirme), reclassement fait par NOM de colonne exclusivement. Poids = Poids origine (kg). E/P non fiable cote Geodis -> laisse vide (alerte 'a verifier'). Frais de tenue de compte mensuel fixe (sans tracking) remonte en info, a ajouter a la main. PDF optionnel : compare le 'Montant Taxable HT' au total calcule (+ frais fixe).",
+  method: "Fichier Facture Geodis (xlsx/csv, ~100 colonnes). ATTENTION : les colonnes se decalent d'un mois a l'autre (confirme), reclassement fait par NOM de colonne exclusivement. Poids = Poids origine (kg). E/P non fiable cote Geodis -> resolu automatiquement via l'export expeditions du mois/mois-1 (PRO_TRACKING -> DES_PARTICULIER), reste vide (alerte 'a verifier') si le tracking n'y est pas trouve. Frais de tenue de compte mensuel fixe (sans tracking) remonte en info, a ajouter a la main. PDF optionnel : compare le 'Montant Taxable HT' au total calcule (+ frais fixe).",
   inputs: [
     { key: 'facture', label: 'Facture Geodis (xlsx/csv)', accept: '.xlsx,.csv', multiple: true, required: true },
     { key: 'pdf', label: 'Facture(s) PDF Geodis (controle du total)', accept: '.pdf', multiple: true, required: false },
