@@ -38,17 +38,30 @@ function sheetName(name) {
   return String(name || 'Feuille').replace(/[:\\/?*[\]]/g, '_').slice(0, 31);
 }
 
-/** Import XLSX = valeurs seules (le fichier a deposer dans l'ERP). */
+const DARK_BLUE = 'FF002060'; // signalement visuel (ex. Lettres : PRO_TRACKING remplace par CODE_EXPE, a reclamer au pole transport)
+
+/** Import XLSX = valeurs seules (le fichier a deposer dans l'ERP). Si une ligne porte
+ * `_flagCol` (nom de colonne 'key' a colorer, ex. 'Tracking'), la cellule correspondante est
+ * remplie en bleu fonce -- signalement visuel d'une valeur corrigee automatiquement (n'affecte
+ * pas le CSV d'import, purement informatif cote XLSX). */
 async function writeImportXlsx(importRows, filePath, importSheetName = 'Import') {
   const rows = sortByTracking(importRows);
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet(sheetName(importSheetName));
   ws.addRow(IMPORT_COLUMNS.map((c) => c.label));
   for (const o of rows) {
-    ws.addRow(IMPORT_COLUMNS.map((c) => {
+    const row = ws.addRow(IMPORT_COLUMNS.map((c) => {
       const v = cellValue(o, c);
       return c.num ? (v === '' ? null : v) : (v === '' ? null : String(v));
     }));
+    if (o._flagCol) {
+      const colIdx = IMPORT_COLUMNS.findIndex((c) => c.key === o._flagCol);
+      if (colIdx >= 0) {
+        const cell = row.getCell(colIdx + 1);
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: DARK_BLUE } };
+        cell.font = { color: { argb: 'FFFFFFFF' } };
+      }
+    }
   }
   await wb.xlsx.writeFile(filePath);
 }

@@ -24,6 +24,19 @@ function findBrutFiles(period, appRoot) {
   return [cur, prev].filter(Boolean);
 }
 
+/** Chemins de TOUS les exports bruts disponibles dans <appRoot>/../Automatisation, tous mois
+ * confondus (pas seulement mois courant/M-1) -- necessaire pour Lettres : le poids d'une
+ * expedition peut n'etre renseigne par le WMS que dans un export ANTERIEUR au mois de
+ * l'expedition elle-meme (constate : 3 trackings a poids=0 dans l'export de juin ont un vrai
+ * poids dans l'export de mai). A utiliser avec parcimonie (cout : lit chaque fichier trouve). */
+function findAllBrutFiles(appRoot) {
+  const brutDir = path.resolve(appRoot, '../Automatisation');
+  if (!fs.existsSync(brutDir)) return [];
+  return fs.readdirSync(brutDir)
+    .filter((f) => /brut/i.test(f) && /\.xlsx?$/i.test(f) && !f.startsWith('~$'))
+    .map((f) => path.join(brutDir, f));
+}
+
 /** Lit une ou plusieurs xlsx bruts -> lignes brutes (header exclu). */
 function readBrutRows(paths) {
   const rows = [];
@@ -36,4 +49,45 @@ function readBrutRows(paths) {
   return rows;
 }
 
-module.exports = { findBrutFiles, readBrutRows };
+// Colonnes fixes de l'export brut (voir header reel : PRO_TRACKING = index 41,
+// DES_PARTICULIER = index 16, INFO_POIDSRETENU = index 34, valeurs
+// 'particulier'/'entreprise'/'point relais').
+const COL_TRACKING = 41;
+const COL_DES_PARTICULIER = 16;
+const COL_POIDS_RETENU = 34;
+
+/** Table tracking -> poids (INFO_POIDSRETENU) a partir des lignes brutes WMS deja lues
+ * (findBrutFiles/readBrutRows). Sert de repli quand un transporteur ne fournit pas de
+ * poids fiable dans son propre fichier (ex. GLS, DPD). */
+function poidsParTrackingFromExport(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    const track = String(r[COL_TRACKING] || '').trim();
+    const poids = Number(r[COL_POIDS_RETENU]);
+    if (track && Number.isFinite(poids) && poids > 0 && !map.has(track)) map.set(track, poids);
+  }
+  return map;
+}
+
+/** DES_PARTICULIER -> E/P ERP. 'point relais' -> E (defaut le plus sur, cf. discussion metier). */
+function epFromDesParticulier(v) {
+  const s = String(v || '').trim().toLowerCase();
+  if (s === 'particulier') return 'P';
+  if (s === 'entreprise' || s === 'point relais') return 'E';
+  return null;
+}
+
+/** Table tracking -> E/P (PRO_TRACKING / DES_PARTICULIER) a partir des lignes brutes WMS
+ * deja lues (findBrutFiles/readBrutRows). Sert de repli quand un transporteur ne fournit
+ * pas de E/P fiable dans son propre fichier (ex. Geodis). */
+function epParTrackingFromExport(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    const track = String(r[COL_TRACKING] || '').trim();
+    const ep = epFromDesParticulier(r[COL_DES_PARTICULIER]);
+    if (track && ep && !map.has(track)) map.set(track, ep);
+  }
+  return map;
+}
+
+module.exports = { findBrutFiles, findAllBrutFiles, readBrutRows, epParTrackingFromExport, poidsParTrackingFromExport };
