@@ -12,7 +12,6 @@ const dpd = require('./carriers/dpd');
 const gls = require('./carriers/gls');
 const geodis = require('./carriers/geodis');
 const mondialRelay = require('./carriers/mondial_relay');
-const ceva = require('./carriers/ceva');
 const lettres = require('./carriers/lettres');
 
 function planned(meta) {
@@ -49,7 +48,7 @@ const PLANNED = [
     inputs: [{ key: 'facture', label: 'Facture BLS', accept: '.xlsx,.csv', multiple: false, required: true }] },
 ];
 
-const carriers = [kuehne, delivengo, dpd, gls, geodis, mondialRelay, ceva, lettres, ...PLANNED.map(planned)];
+const carriers = [kuehne, delivengo, dpd, gls, geodis, mondialRelay, lettres, ...PLANNED.map(planned)];
 const byId = Object.fromEntries(carriers.map((c) => [c.id, c]));
 
 /** Metadonnees publiques (pour l'UI), sans exposer process(). */
