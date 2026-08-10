@@ -74,7 +74,40 @@ dans `facturation-app/` — signalé en **⚠️** avec le contexte.
 
 ## DPD
 
-- Fait.
+- **⚠️ Écart constaté sur le fichier fait à la main de juillet (2026-07)** :
+  comparaison ligne à ligne entre `2026_07_Facture DPD.xlsx` (fait à la main)
+  et le classeur généré par `finaliser_dpd.py` à partir des mêmes fichiers
+  sources reçus (`.../2026 07/DPD/excel/*.xlsx`). Écart total de **15,50 €**
+  sur la colonne D (« Total hors GO ») de l'onglet « Facture DPD » :
+  30 440,80 € (généré) vs 30 425,30 € (fait main).
+  - Réparti sur 3 colonnes : **C — Zones éloignées** (+14,32 €, 70 lignes),
+    **I — Frêt** (+2,66 €, 32 lignes), **K — Retour** (−1,48 €, 26 lignes).
+  - Pour chaque ligne vérifiée (par N° Colis), la valeur retenue par le
+    finaliseur correspond **exactement** à la valeur brute du fichier source
+    reçu de DPD (ex. tracking `10214001115721` : « Fact. Retour expédition »
+    = 5,70 dans le fichier source, contre 6 dans le fichier fait à la main ;
+    tracking `10214001114728` : « Supplément île et montagne » = 5,28 dans le
+    fichier source, contre 5 dans le fichier fait à la main).
+  - **Confirmé avec le pôle transport (2026-08-07) : notre méthode est la
+    bonne.** Le fichier fait à la main arrondit ces montants (à l'entier le
+    plus proche sur 122 des 128 lignes en écart), le classeur généré garde
+    les décimales exactes des fichiers source DPD.
+
+- **Écart persistant entre « Bilan factures » (colonne Ecart) et les factures
+  PDF DPD — cause identifiée (2026-08-07), pas une erreur** : le TCD compare
+  « Somme de Total GO » (colonne E de « Facture DPD ») au montant HT de
+  chaque PDF, et un écart subsiste presque toujours (ex. juillet : de
+  −19,93 € à +116,15 € selon le compte). Cause : la formule Total GO de
+  juillet (`E = SUM(G:L)+SUM(A:C)+N`) utilise la colonne **N « Frais de
+  dossier modifié »** (total mensuel des « Frais de tenue de compte » réparti
+  également sur toutes les lignes du mois), alors que **chaque PDF facture
+  le vrai montant réel M « Frais dossier réel »** propre à ce compte (souvent
+  20 € fixe, indépendant du nombre de lignes de ce compte). L'écart mesuré
+  correspond exactement à `N − M` pour chaque compte (vérifié à l'exactitude
+  du centime sur les 15 comptes de juillet). C'est la formule officielle du
+  fichier fait à la main (confirmée par le pôle transport) — l'écart est donc
+  structurel et attendu, pas un signe d'erreur de calcul.
+
 
 ## Lettres
 
@@ -85,6 +118,7 @@ dans `facturation-app/` — signalé en **⚠️** avec le contexte.
   préparation (ne pas facturer, bien vérifier).
 - `PRO_TRACKING` commençant par **BAC25\*** = erreur atelier → mettre le
   numéro d'expédition en tracking.
+  
 
 ## UPS
 

@@ -1,0 +1,48 @@
+{
+  "carrier": "DPD",
+  "tracking_col": "N° Colis",
+  "date_facture_col": "Date de facture",
+  "pays_col": "Code pays destinataire",
+  "poids_col": "Poids",
+  "champs_fixes": { "Transporteur": "DPD", "E/P": "P", "mode envoi": "France" },
+
+  "_comment_tracking": "N Colis (pas DPD ID) : confirme par la video process -- DPD ID s'affiche parfois en notation scientifique (perte de precision), N Colis est la reference fiable ('Format tracking a modifier' = alerte video sur ce point).",
+
+  "_comment_postes": "Mapping decode des FORMULES du classeur fait a la main (2026_06_Facture DPD.xlsx, onglet 'Facture DPD', colonnes A a N) : chaque poste = somme de colonnes nommees precises. Positions NON stables (meme piege que Geodis, colonnes DPD peuvent se decaler d'un mois a l'autre) -> reclassement TOUJOURS par nom de colonne.",
+  "postes_from_columns": {
+    "DroitsTaxes": ["Frais de douane"],
+    "Assurance": [],
+    "ZonesEloignees": ["Supplément île et montagne"],
+    "ColisVolumineux": ["Fact. Colis Refusés", "Fact. statuts Hors norme", "Fact. Colis non mécanisable"],
+    "Adresses": [
+      "Fact. statuts Absent Avisés", "Fact. Avisage par SMS", "Fact. Statuts adresse erronée",
+      "Fact. Colis Pos. Inventaire", "Fact.statut Liv.domicile privé", "Fact. colis code non fourni",
+      "Fact. statuts hors domicile déposé en consigne"
+    ],
+    "Fret": [
+      "Prix transport", "Supplément prédict", "Supplément DPD Sécure", "Participation Sûreté",
+      "Contribution Logistique Responsable", "Fact. statuts livraison PR", "Fac statut colis non retiré PR",
+      "Fact. Colis Pos. Inventaire", "Fact. Etiquette client fausse", "Fact. Colis Refusés",
+      "Fact. Emballage non conforme", "Supplément DPD inversé", "Fact. DPD Relais non retirés",
+      "Supplément DPD Relais", "Fact. Consignation EDI manquante ou incomplète", "Fact. étiquette non lisible"
+    ],
+    "BtoC": ["Fact. Ramasse programmée sans colis"],
+    "Retour": ["Fact. Retour expédition", "Fact. Colis Refusés", "Supplément DPD Retour"],
+    "Gazole": ["Taxe Consolidation", "Indexation gasoil", "Indexation kérosène"]
+  },
+  "_comment_frais_dossier": "'Frais dossier modifie' (poste M dans Facture DPD, colonne N dans le classeur original) : total des 'Frais de tenue de compte' de TOUTES les lignes du mois, reparti egalement (ARRONDI.SUP 2 decimales) sur le nombre de lignes. Formule modele : =ARRONDI.SUP(SOMME(colonne_frais_tenue_compte)/NB(colonne_frais_tenue_compte),2), appliquee identique a chaque ligne (confirme sur le classeur : $DI$1=SOMME(M:M) absolu, meme valeur partout, pas une variation par compte malgre ce que suggerait une lecture partielle de la video).",
+  "frais_dossier_source_col": "Frais de tenue de compte",
+
+  "_comment_fret_import": "Import ERP.Fret = ARRONDI(Facture DPD.Fret + Facture DPD.Retour + Facture DPD.FraisDossierModifie, 2) -- Retour et Frais dossier modifie sont fusionnes dans Fret au niveau de l'import final (pas des postes ERP separes, contrairement a Geodis qui n'a pas ces 2 postes intermediaires).",
+
+  "_comment_zoning": "Zone/TVA par pays via XLOOKUP sur l'onglet Zoning du classeur fait a la main (meme mecanique que Geodis, table Pays -> [Zone, TVA]). Copie figee de l'onglet Zoning de 2026_06_Facture DPD.xlsx -- a resynchroniser si le classeur de reference change.",
+  "zoning": {
+    "AD": [3, 0], "AT": [2, 0.2], "BA": [5, 0], "BE": [1, 0.2], "BG": [4, 0.2],
+    "CH": [2, 0], "CS": [5, 0.2], "CZ": [2, 0.2], "DE": [1, 0.2], "DK": [3, 0.2],
+    "EE": [3, 0.2], "ES": [2, 0.2], "FI": [4, 0.2], "FR": ["France", 0.2], "GB": [2, 0],
+    "GR": [4, 0.2], "HR": [3, 0.2], "HU": [3, 0.2], "IC": [5, 0], "IE": [3, 0.2],
+    "IT": [2, 0.2], "LI": [2, 0.2], "LT": [3, 0.2], "LU": [1, 0.2], "LV": [3, 0.2],
+    "NL": [1, 0.2], "NO": [4, 0.2], "PL": [2, 0.2], "PT": [2, 0.2], "RO": [4, 0.2],
+    "SE": [3, 0.2], "SI": [3, 0.2], "SK": [3, 0.2], "UA": [5, 0], "XI": [3, 0.2]
+  }
+}
