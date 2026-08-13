@@ -228,10 +228,13 @@ async function process(files) {
   const pdfPaths = files.pdf || files.facture || [];
   if (!pdfPaths.length) throw new Error('Aucun fichier fourni (attendu : facture BLS reçue, PDF).');
 
+  const affretementPaths = files.affretement || [];
+  if (!affretementPaths.length) {
+    throw new Error('Export "AffreTrans" manquant (obligatoire) : sans lui, "Id client"/"Nbr Colis"/"Poids" ne peuvent pas être complétés (aucune autre source disponible pour BLS).');
+  }
+
   const warnings = [];
   const infos = [];
-
-  const affretementPaths = files.affretement || [];
   let affretementMap = new Map();
   for (const p of affretementPaths) {
     try {
@@ -264,6 +267,15 @@ async function process(files) {
         dossier: String(it.dossier || '').trim(),
         libelle: it.libelle,
         montantHt: round2(it.montant || 0),
+        // Navette = trajet INTERNE entre les 2 sites "21 Longvic" <-> "21 Créancey" (pas
+        // seulement les lignes explicitement libellees "navette" : confirme sur juillet 2026
+        // que "V/Réf ALLER/RETOUR DU 08/06 De 21 Longvic A 21 Créancey", "V/Réf MAJE 09/07 De
+        // 21 Longvic A 21 Créancey" et "De 21 Longvic A 21 Créancey" -- sans le mot "navette"
+        // -- sont le MEME trajet interne que les lignes "V/Réf NAVETTE ..." -- decision
+        // utilisateur 2026-08-12). Cout REEL paye a BLS (pas 0€, contrairement aux lignes
+        // "sans montant" ci-dessous) mais PAS refacturable au client -> reste dans le
+        // classeur/reconciliation PDF (montant reel paye), exclue de importRows uniquement.
+        isNavette: /21\s*longvic/i.test(it.libelle || '') && /21\s*cr[ée]ancey/i.test(it.libelle || ''),
       });
     }
   }
@@ -282,37 +294,58 @@ async function process(files) {
     return true;
   });
 
+  // Poids/Nbr Colis par defaut pour les lignes navette dans l'import (decision
+  // utilisateur 2026-08-12) : ces trajets n'ont pas de poids/colis reels mesures (pas
+  // de correspondance AffreTrans standard, trajet interne entre sites) -> valeurs
+  // fixes forfaitaires.
+  const POIDS_NAVETTE_DEFAUT = 13200;
+  const NBRCOLIS_NAVETTE_DEFAUT = 33;
+
   let nbAffretementTrouve = 0;
+  const nbNavetteExclues = recsFiltres.filter((rec) => rec.isNavette).length;
+  const montantNavetteExclu = round2(recsFiltres.filter((rec) => rec.isNavette).reduce((s, rec) => s + rec.montantHt, 0));
   const importRows = recsFiltres.map((rec) => {
     const aff = affretementMap.get(rec.dossier);
-    if (aff) nbAffretementTrouve++;
+    // Navette : poids/colis forfaitaires (POIDS_NAVETTE_DEFAUT), pas de jointure
+    // AffreTrans attendue -> ne compte pas dans nbAffretementTrouve/nbSansAffretement
+    // (pas une vraie lacune a signaler comme pour les autres lignes).
+    if (aff && !rec.isNavette) nbAffretementTrouve++;
     return {
       Transporteur: cfg.champs_fixes.Transporteur,
       DateValidite: dateValidite || '',
-      Ref1: '', Ref2: '', IdClient: aff ? aff.idClient : '',
+      // Id client : TOUJOURS vide dans le fichier import (decision utilisateur 2026-08-12,
+      // s'applique a tous les transporteurs) -- aff.idClient reste dispo pour d'autres
+      // usages internes mais n'est plus reporte ici.
+      Ref1: '', Ref2: '', IdClient: '',
       // Le libelle peut porter un retour a la ligne (motif "V/Ref...\nDe X A Y", cf.
       // parseFacturePdf) -- remplace par un espace pour l'affichage/export (CSV/XLSX ne
       // gerent pas le wrap text comme la cellule Excel du classeur clone).
       Tracking: rec.dossier, Nom: rec.libelle.replace(/\n/g, ' '),
       EP: cfg.champs_fixes['E/P'], Pays: cfg.champs_fixes.Pays, Zone: cfg.champs_fixes.Zone,
-      NbrColis: aff ? Math.round(aff.nbPalettes) : 0, Poids: aff ? aff.poids : 0,
+      NbrColis: rec.isNavette ? NBRCOLIS_NAVETTE_DEFAUT : (aff ? Math.round(aff.nbPalettes) : 0),
+      Poids: rec.isNavette ? POIDS_NAVETTE_DEFAUT : (aff ? aff.poids : 0),
       Mode: cfg.champs_fixes.Mode, TVA: cfg.champs_fixes.tva,
       DroitsTaxes: 0, Assurance: 0,
       ZonesEloignees: 0, ColisVolumineux: 0, Adresses: 0,
-      Fret: rec.montantHt, PlusValueB2C: 0, TaxeGasoil: '', NbColis: '',
+      // Navette : PAS refacturable au client -> Fret=0 dans l'import, meme si un montant
+      // reel a ete paye a BLS (rec.montantHt, garde pour la reconciliation PDF ci-dessous).
+      Fret: rec.isNavette ? 0 : rec.montantHt, PlusValueB2C: 0, TaxeGasoil: '', NbColis: '',
+      _isNavette: rec.isNavette, // interne, retire avant retour -- exclu de validate() ci-dessous
     };
   });
 
-  const { alerts, infos: valInfos } = validate(importRows, { skipPoidsDecimal: true });
+  // Navette : COLIS=0/FRET=0 sont des consequences ATTENDUES de la regle ci-dessus (deja
+  // expliquees en infos), pas de vraies anomalies -> exclues de validate() pour ne pas
+  // generer 2 alertes de bruit par ligne navette (COLIS=0 + FRET=0).
+  const { alerts, infos: valInfos } = validate(importRows.filter((o) => !o._isNavette), { skipPoidsDecimal: true });
+  for (const o of importRows) delete o._isNavette;
   infos.push(...valInfos);
-  const nbSansAffretement = recsFiltres.length - nbAffretementTrouve;
-  if (affretementPaths.length) {
-    infos.push(`Export affrètement : "Id client"/"Nbr Colis"/"Poids" complétés pour ${nbAffretementTrouve}/${recsFiltres.length} ligne(s) (jointure sur "Récépissé" = "Dossier").`);
-    if (nbSansAffretement) infos.push(`${nbSansAffretement} ligne(s) sans correspondance dans l'export affrètement — "Id client"/"Nbr Colis"/"Poids" à compléter manuellement.`);
-  } else if (recsFiltres.length) {
-    infos.push(`"Id client"/"Nbr Colis"/"Poids" non renseignés (aucun export affrètement fourni) — à compléter manuellement, ${recsFiltres.length} ligne(s) concernée(s).`);
-  }
+  const nbHorsNavette = importRows.length - nbNavetteExclues;
+  const nbSansAffretement = nbHorsNavette - nbAffretementTrouve;
+  infos.push(`Export affrètement : "Id client"/"Nbr Colis"/"Poids" complétés pour ${nbAffretementTrouve}/${nbHorsNavette} ligne(s) (jointure sur "Récépissé" = "Dossier", hors navette).`);
+  if (nbSansAffretement) infos.push(`${nbSansAffretement} ligne(s) sans correspondance dans l'export affrètement — "Id client"/"Nbr Colis"/"Poids" à compléter manuellement.`);
   if (nbLignesSansMontantSupprimees) infos.push(`${nbLignesSansMontantSupprimees} ligne(s) supprimée(s) (Poids et Frêt tous à 0 — rien à facturer sur cette ligne).`);
+  if (nbNavetteExclues) infos.push(`${nbNavetteExclues} ligne(s) "navette" (trajet interne, non refacturable au client, ${montantNavetteExclu.toFixed(2)} EUR payés à BLS) — Frêt=0 dans l'import ERP, Poids=${POIDS_NAVETTE_DEFAUT} (forfaitaire).`);
 
   // Reconciliation : Total HT officiel (extrait du PDF, bloc de synthese) compare au total
   // calcule (somme des montants par ligne "Dossier") -- meme fichier, meme source, donc
@@ -331,11 +364,19 @@ async function process(files) {
     infos.push(`Facture PDF ${f.file} (${f.nFacture}) : Total HT = ${f.totalHt.toFixed(2)} EUR, calculé = ${calcule.toFixed(2)} EUR (écart ${ecart >= 0 ? '+' : ''}${ecart.toFixed(2)} EUR -> ${statut})`);
   }
 
-  const controle = { Fret: round2(recs.reduce((s, r) => s + r.montantHt, 0)) };
+  // controle (total affiche a l'ecran) = total FACTURABLE au client, base sur importRows
+  // (Fret=0 pour les lignes navette, deja integre ci-dessus) -- distinct du total
+  // reconcilie avec le PDF ci-dessus, qui lui inclut la navette (montant reellement paye
+  // au transporteur, rec.montantHt).
+  const controle = { Fret: round2(importRows.reduce((s, r) => s + (r.Fret || 0), 0)) };
 
   return {
+    // Classeur ("Factures BLS") = recsFiltres, PAS recs : la/les ligne(s) a montant 0€
+    // (rien a facturer, cf. plus haut) sont retirees aussi du classeur, pas seulement de
+    // l'import ERP (decision utilisateur 2026-08-12). Navette, elle, reste bien presente
+    // (recsFiltres inclut encore les lignes isNavette, exclues uniquement de importRows).
     header: ['Date Prestation', 'Dossier', 'Libellé', 'Unité', 'Quantité', 'Montant H.T.', 'Code Tva'],
-    rows: recs, recs, importRows, controle, warnings, alerts, infos,
+    rows: recsFiltres, recs: recsFiltres, importRows, controle, warnings, alerts, infos,
     posteKeys: ['Fret'], cfg, factures,
     sheetNames: { raw: 'Factures BLS', import: 'Import CSV' },
     period: dateValidite ? `${dateValidite.slice(6)}_${dateValidite.slice(3, 5)}` : 'export',
@@ -351,7 +392,7 @@ module.exports = {
   method: "Bien vérifier que tous les trackings sont déjà rentrés dans l'ERP pour les différentes expé (faire le rapprochement avec le fichier affrètement) pour éviter les avaries d'imports.",
   inputs: [
     { key: 'pdf', label: 'Facture(s) PDF BLS', accept: '.pdf', multiple: true, required: true },
-    { key: 'affretement', label: 'Export "AffreTrans" (CSV, pour Id client/Nbr Colis/Poids)', accept: '.csv', multiple: false, required: false },
+    { key: 'affretement', label: 'Export "AffreTrans" (CSV, pour Id client/Nbr Colis/Poids)', accept: '.csv', multiple: false, required: true },
   ],
   // Classeur = CLONE FIDELE du fichier fait a la main (Excel COM/Python), comme DPD/Geodis/GLS/Mondial Relay.
   outputNaming: { workbook: '{period}_Facture BLS', import: '{period}_BLS_Import' },

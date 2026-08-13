@@ -1,0 +1,90 @@
+{
+  "carrier": "CHRONOPOST",
+
+  "_comment_source": "2 fichiers Excel bruts recus (1 par sous-compte/contrat), feuille 'Donnees', titre 'Detail de facture chronopost', 'Compte : <n> - LA RUCHE LOGISTIQUE' en A2, en-tete EXACT en ligne 4 : No Facture/Sous-compte/Date LT/Code postal depart/Code postal arrivee/Pays depart/Pays arrivee/Ref Destinataire/Ref Expediteur/No Groupage tarifaire/Numero LT/Groupage/Type prestation/TVA/Observations/Zone Tarifaire/Poids/Produit/Montant HT/Raison sociale (20 colonnes). Donnees a partir de la ligne 5. Confirme identique sur les 2 fichiers de juin 2026.",
+
+  "_comment_lignes_forfaitaires": "Lignes 'Type prestation' speciales (montant forfaitaire, PAS un colis reel) identifiees par PREFIXE de la colonne 'Numero LT' : CAP*=Surcharge Carburant (I=Aerien/N=National-Routier/O=Outre-mer), ECO*=Participation Eco-Responsable, SUR*=Surete colis. Motif CONFIRME variable selon le sous-compte : le contrat standard peut avoir 1 a 3 triplets (I/N/O) par facture, le contrat 2SHOP n'a JAMAIS que le triplet N (jamais d'aerien/outre-mer, confirme sur 2194 lignes de juin 2026, exactement 4 ECORN/4 SURTN/4 CAPN2 pour les 4 factures 2shop). Le code doit gerer dynamiquement 1 a 3 triplets par facture, PAS un nombre fixe.",
+
+  "_comment_ep": "E/P (Entreprise/Particulier) : SEUL le mode envoi '1S' a une grille tarifaire Entreprise ('E'), TOUS les autres modes sont 'P' (Particulier) -- corrige par le pole transport (2026-08-12) apres 64 avaries en juillet 2026 causees par un ancien 'E' fixe pour tout Chronopost. Voir epPourMode() dans index.js.",
+
+  "_comment_categories": "Feuille 'Categories' du classeur modele -- mapping EXACT Type prestation -> poste ERP (LOOKUP exact-match, PAS de correspondance approximative). Confirme sur 2026_06_Facture Chronopost.xlsx : Surete colis ET Participation Eco-Responsable sont classees 'Frêt' (pas un poste 'Surete' separe malgre les sous-totaux 'eco'/'surete' distincts en colonne AF de 'Facture Chronopost' -- ces sous-totaux servent au controle interne, PAS a la ventilation finale ERP). 'Traitement SAV complementaire' CORRIGE 2026-08-13 (etait 'Adresse', faux) : confirme 'Frêt' en comparant au CSV fait a la main de juillet 2026 sur les 5 trackings signales par le pole transport (email Caroline Schmitt, XF145501132FR/XW274558976JF/XW276021292JF/XW279505670JF/XW281141125JF) -- la colonne 'Adresses' du fichier reel est VIDE sur ces lignes, le montant 16€ est integralement dans 'Frêt'.",
+  "categories": {
+    "Assurance": "Assurance",
+    "Correction d'adresse": "Adresse",
+    "Eco responsablePar": "Frêt",
+    "ESD": "Gazole",
+    "Frais de gestion": "Frais facturation",
+    "Participation Eco-Responsable": "Frêt",
+    "Supp Retour Expediteur Europe": "Frêt",
+    "Supp Retour Expediteur Inter": "Frêt",
+    "Supp Zone Internationale Eloignee": "Zones éloignées",
+    "Supplement Annonce incomplète": "Adresse",
+    "Supplement Corse": "Zones éloignées",
+    "Supplement Corse 18h": "Corse",
+    "Supplement domicile prive": "Zones éloignées",
+    "Supplement Douane Zone C2": "Droits et taxes",
+    "Supplement Douane Zone C4": "Droits et taxes",
+    "Supplement Etiquette Non Conforme": "Frêt",
+    "Supplement Forfait Expedition": "Frêt",
+    "Supplement GT": "Frêt",
+    "Supplement Hors Norme": "Colis volumineux",
+    "Supplement Manutention": "Colis volumineux",
+    "Supplement Retour Expediteur": "Frêt",
+    "Supplement Retrait Bureau": "Zones éloignées",
+    "Surcharge Carburant Aérien": "Gazole",
+    "Surcharge Carburant Routier": "Gazole",
+    "Surcharge Facture Papier": "Frais facturation",
+    "Sûreté colis": "Frêt",
+    "Traitement Réacheminement": "Frêt",
+    "Traitement SAV complémentaire": "Frêt",
+    "Transport": "Frêt",
+    "Transport encompte": "Frêt",
+    "Sûreté étendue": "Frêt",
+    "Zones Difficiles d'accès": "Zones éloignées"
+  },
+
+  "_comment_bibliotheque": "Feuille 'Bibliotheque transporteurs' du classeur modele -- mapping 'produit chrono' (colonne Produit du brut) -> mode envoi ERP / zone ERP / Transporteur. Cle CHRONO_2SHOP_KERSUN completee EN DUR ici (utilisateur a corrige sa copie Excel mais pas encore sauvegarde sur le fichier modele du projet, 2026-08-11) -- meme valeurs que leurs equivalents 5X/5Y/6B/6C non-Kersun.",
+  "bibliotheque": {
+    "1": { "modeEnvoi": "16", "zone": "16", "transporteur": "CHRONOPOST" },
+    "2": { "modeEnvoi": "2", "zone": "2", "transporteur": "CHRONOPOST" },
+    "17": { "modeEnvoi": "17", "zone": "17", "transporteur": "CHRONOPOST" },
+    "44": { "modeEnvoi": "44", "zone": "44", "transporteur": "CHRONOPOST" },
+    "86": { "modeEnvoi": "86", "zone": "86", "transporteur": "CHRONOPOST" },
+    "2L": { "modeEnvoi": "16", "zone": "16", "transporteur": "CHRONOPOST" },
+    "3Z": { "modeEnvoi": "16", "zone": "16", "transporteur": "CHRONOPOST" },
+    "16": { "modeEnvoi": "16", "zone": "16", "transporteur": "CHRONOPOST" },
+    "1S": { "modeEnvoi": "1S", "zone": "1S", "transporteur": "CHRONOPOST" },
+    "5X": { "modeEnvoi": "5X", "zone": "5X", "transporteur": "CHRONO_2SHOP" },
+    "5Y": { "modeEnvoi": "5Y", "zone": "5Y", "transporteur": "CHRONO_2SHOP" },
+    "6B": { "modeEnvoi": "6B", "zone": "6B", "transporteur": "CHRONO_2SHOP" },
+    "6C": { "modeEnvoi": "6C", "zone": "6C", "transporteur": "CHRONO_2SHOP" },
+    "5XK": { "modeEnvoi": "5X", "zone": "5X", "transporteur": "CHRONO_2SHOP_KERSUN" },
+    "5YK": { "modeEnvoi": "5Y", "zone": "5Y", "transporteur": "CHRONO_2SHOP_KERSUN" },
+    "6BK": { "modeEnvoi": "6B", "zone": "6B", "transporteur": "CHRONO_2SHOP_KERSUN" },
+    "6CK": { "modeEnvoi": "6C", "zone": "6C", "transporteur": "CHRONO_2SHOP_KERSUN" }
+  },
+
+  "_comment_zoning2shop": "Feuille 'Zoning 2shop' -- pour produit='6B', zone reelle = lookup Pays ARRIVEE dans cette table (colonnes A/B) ; pour produit='6C', zone reelle = lookup Pays DEPART (colonnes C/D). Remplace la zone generique '6B'/'6C' de la bibliotheque -- regle speciale confirmee par formule TCD!U3.",
+  "zoning_2shop": {
+    "AT": 1, "BE": 2, "BG": 3, "CH": 4, "CZ": 5, "DE": 6, "DK": 7, "EE": 8,
+    "ES": 9, "FI": 8, "HR": 8, "HU": 8, "IE": 7, "IT": 14, "LT": 15, "LU": 6,
+    "LV": 8, "NL": 6, "PL": 5, "PT": 9, "RO": 3, "SE": 15, "SI": 7, "SK": 24
+  },
+  "zoning_2shop_6c": {
+    "AT": 25, "BE": 26, "BG": 27, "CH": 28, "CZ": 29, "DE": 30, "DK": 25, "EE": 27,
+    "ES": 33, "FI": 27, "HR": 27, "HU": 28, "IE": 37, "IT": 33, "LT": 39, "LU": 30,
+    "LV": 27, "NL": 42, "PL": 43, "PT": 33, "RO": 27, "SE": 39, "SI": 25, "SK": 25
+  },
+
+  "_comment_pays_tva": "Feuille 'Pays TVA' -- Pays vide ou non liste = 20% par defaut (formule modele : SI(Pays=\"\";0,2;RECHERCHE(...))).",
+  "pays_tva": {
+    "AT": 0.2, "BE": 0.2, "CH": 0, "DE": 0.2, "ES": 0.2, "GB": 0, "GR": 0.2,
+    "IT": 0.2, "LU": 0.2, "NL": 0.2, "PF": 0
+  },
+
+  "_comment_sous_comptes": "Feuille 'Sous-comptes' -- mapping N sous-compte (colonne 'Sous-compte' du brut) -> Client. Sous-comptes 5/6 EXISTENT dans le classeur modele mais SANS libelle client -- laisses tels quels ici (pas de valeur inventee), lookup echoue = IdClient vide + alerte, comme les autres transporteurs (decision utilisateur 2026-08-11 : ne pas creuser ce point tant qu'aucune donnee reelle ne l'utilise).",
+  "sous_comptes": { "0": "La Ruche", "1": "Ker Sun", "2": "Foutas" },
+
+  "_comment_produits_hors_contrat": "Produits Chrono CONNUS de 'Bibliotheque transporteurs' mais dont le contrat a ete resilie -- Chronopost facture parfois encore dessus PAR ERREUR, a un tarif plus eleve (email pole transport 2026-08-12, 6 trackings By Foutas factures en '3Z' en juillet 2026 malgre resiliation). Ligne signalee en alerte pour reclamation aupres de Chronopost, PAS corrigee automatiquement (pas de tarif de repli devine).",
+  "produits_hors_contrat": ["3Z"]
+}

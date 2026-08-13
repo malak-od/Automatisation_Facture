@@ -264,15 +264,35 @@ def main():
 
     if not pdf_paths:
         raise RuntimeError("Aucune facture PDF fournie (--pdf <pdf1> [<pdf2>...]).")
+    if not affretement_paths:
+        raise RuntimeError('Export "AffreTrans" manquant (obligatoire, --affretement <csv>) : sans lui, "Id client"/"Nbr Colis"/"Poids" ne peuvent pas être complétés.')
     factures = [parse_facture_pdf(p) for p in pdf_paths]
     all_items = []
     for f in factures:
         for it in f["items"]:
             it["n_facture"] = f["n_facture"] or ""
+            # Navette = trajet INTERNE entre les 2 sites "21 Longvic" <-> "21 Créancey" (pas
+            # seulement les lignes libellees "navette" -- meme regle que le carrier Node,
+            # src/carriers/bls/index.js, a garder synchronisee -- decision utilisateur
+            # 2026-08-12). Cout REEL paye a BLS mais PAS refacturable au client.
+            libelle_low = (it["libelle"] or "").lower()
+            it["is_navette"] = ("21 longvic" in libelle_low) and ("21 cr" in libelle_low and "ancey" in libelle_low)
             all_items.append(it)
     if not all_items:
         raise RuntimeError("Aucune ligne 'Dossier' trouvée dans les facture(s) fournies.")
     print(f"Entrée : {len(factures)} facture(s), {len(all_items)} ligne(s) 'Dossier'")
+
+    # "Factures BLS"/"Import CSV" : lignes a montant 0 retirees (rien a facturer nulle part,
+    # confirme = montant reellement nul -- cf. docstring), navette CONSERVEE (visible, cout
+    # reel paye a BLS meme si non refacturee -- decision utilisateur 2026-08-12).
+    items = [it for it in all_items if it["montant"] != 0]
+    n_montant_nul = len(all_items) - len(items)
+    if n_montant_nul:
+        print(f"{n_montant_nul} ligne(s) à montant nul supprimée(s) (rien à facturer).")
+    n_navette = sum(1 for it in items if it["is_navette"])
+    if n_navette:
+        montant_navette = round(sum(it["montant"] for it in items if it["is_navette"]), 2)
+        print(f"{n_navette} ligne(s) navette ({montant_navette} EUR payés à BLS) : Frêt=0 dans Import CSV, Poids=13200 (forfaitaire).")
 
     affretement_map = {}
     for p in affretement_paths:
@@ -281,8 +301,9 @@ def main():
         except Exception as e:
             print(f"AVERTISSEMENT: export affrètement {os.path.basename(p)} illisible ({e}).")
     if affretement_paths:
-        n_trouve = sum(1 for it in all_items if it["dossier"] in affretement_map)
-        print(f"Export affrètement : {n_trouve}/{len(all_items)} ligne(s) complétée(s) (Id client/Poids/Nb palettes).")
+        items_hors_navette = [it for it in items if not it["is_navette"]]
+        n_trouve = sum(1 for it in items_hors_navette if it["dossier"] in affretement_map)
+        print(f"Export affrètement : {n_trouve}/{len(items_hors_navette)} ligne(s) complétée(s) (Id client/Poids/Nb palettes, hors navette).")
 
     # Réconciliation : Total HT officiel (extrait du PDF) vs somme des montants extraits --
     # même fichier, même source, donc un écart ici signale un bug de parsing.
@@ -324,12 +345,12 @@ def main():
         #    F=Impact CO2(vide) G=Unite H=Quantite I=Prix Unitaire(vide) J=Montant H,T, K=Code Tva
         ws = wb.Sheets("Factures BLS")
         oldLast = ws.Cells(ws.Rows.Count, 4).End(xlUp).Row  # D = Dossier
-        newLast = 1 + len(all_items)
+        newLast = 1 + len(items)
         maxLast = max(oldLast, newLast, 2)
         retry(lambda: ws.Range(ws.Cells(2, 1), ws.Cells(maxLast, 11)).ClearContents())
 
         data = []
-        for it in all_items:
+        for it in items:
             date_val = to_excel_serial_from_ddmmyyyy(it["date"])
             aff = affretement_map.get(it["dossier"])
             data.append([
@@ -373,7 +394,7 @@ def main():
             wsImp.Cells(2, 2).Value = date_validite_serial
         else:
             print("AVERTISSEMENT: 'Date Prestation' introuvable -> 'Date validité tarif' (Import CSV!B2) non mise à jour, reste celle du modèle.")
-        newLastImp = 1 + len(all_items)
+        newLastImp = 1 + len(items)
         LAST_COL_IMPORT = 23  # A -> W (23 colonnes standard ERP)
         if newLastImp > 2:
             retry(lambda: wsImp.Range(wsImp.Cells(2, 1), wsImp.Cells(newLastImp, LAST_COL_IMPORT)).FillDown())
@@ -383,16 +404,31 @@ def main():
         # pole transport vers l'export "AffreTrans") -- le FillDown ci-dessus les aurait
         # recopiees depuis la ligne 2 du modele (valeurs de juin, sans rapport avec le mois
         # traite) -> purgees d'abord, puis remplies via l'export affretement fourni (jointure
-        # sur Dossier=Récépissé, meme logique que le carrier Node). Les lignes sans
+        # sur Dossier=Récépissé, meme logique que le carrier Node). Navette : Nbr Colis/Poids
+        # FIXES forfaitaires (pas de jointure AffreTrans attendue, meme principe pour les
+        # 2 champs -- decision utilisateur 2026-08-12). Les lignes hors-navette sans
         # correspondance restent vides, a completer manuellement comme avant.
+        POIDS_NAVETTE_DEFAUT = 13200
+        NBRCOLIS_NAVETTE_DEFAUT = 33
         if newLastImp >= 2:
             retry(lambda: wsImp.Range(wsImp.Cells(2, 11), wsImp.Cells(newLastImp, 12)).ClearContents())
-            if affretement_map:
-                kl_data = []
-                for it in all_items:
-                    aff = affretement_map.get(it["dossier"])
-                    kl_data.append([round(aff["nb_palettes"]) if aff else None, aff["poids"] if aff else None])
-                retry(lambda: wsImp.Range(wsImp.Cells(2, 11), wsImp.Cells(1 + len(kl_data), 12)).__setattr__("Value", kl_data))
+            kl_data = []
+            for it in items:
+                aff = affretement_map.get(it["dossier"])
+                if it["is_navette"]:
+                    nb_colis, poids = NBRCOLIS_NAVETTE_DEFAUT, POIDS_NAVETTE_DEFAUT
+                else:
+                    nb_colis = round(aff["nb_palettes"]) if aff else None
+                    poids = aff["poids"] if aff else None
+                kl_data.append([nb_colis, poids])
+            retry(lambda: wsImp.Range(wsImp.Cells(2, 11), wsImp.Cells(1 + len(kl_data), 12)).__setattr__("Value", kl_data))
+        # T (Frêt) : formule ='Factures BLS'!J{n} (montant REEL, y compris navette, cf. la
+        # feuille "Factures BLS" ci-dessus) -> pour les lignes navette, PAS refacturables au
+        # client, on fige la valeur a 0 APRES le FillDown (meme mecanisme que M/W chez
+        # Delivengo : geler une formule en valeur pour la remplacer).
+        navette_rows = [i + 2 for i, it in enumerate(items) if it["is_navette"]]
+        for r in navette_rows:
+            retry(lambda r=r: setattr(wsImp.Cells(r, 20), "Value", 0))
 
         # 3) "Bilan PDF"/"Bilan client" : TCD dont le PivotCache pointe deja une plage OUVERTE
         #    ('Factures BLS'!B1:K1048576 / A1:K1048576 -- confirme sur le modele, contrairement
