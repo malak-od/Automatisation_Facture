@@ -13,6 +13,7 @@ const gls = require('./carriers/gls');
 const geodis = require('./carriers/geodis');
 const mondialRelay = require('./carriers/mondial_relay');
 const lettres = require('./carriers/lettres');
+const bls = require('./carriers/bls');
 
 function planned(meta) {
   return {
@@ -43,12 +44,9 @@ const PLANNED = [
   { id: 'tnt', name: 'TNT', taxeGasoil: 'Facture PDF (taux officiel)',
     method: "Etendre colonnes, ajouter les postes, MAJ TCD, NE PAS convertir les trackings en nombre, verifier tarifs via surcharge carburant PDF.",
     inputs: [{ key: 'facture', label: 'Facture TNT', accept: '.xlsx,.csv', multiple: false, required: true }] },
-  { id: 'bls', name: 'BLS', viticolis: true, taxeGasoil: 'A definir',
-    method: "Pas encore demarre. Verifier que les trackings sont dans l'ERP (rapprochement fichier affretement), copier facture BLS, MAJ TCD, comparer ecart PDF.",
-    inputs: [{ key: 'facture', label: 'Facture BLS', accept: '.xlsx,.csv', multiple: false, required: true }] },
 ];
 
-const carriers = [kuehne, delivengo, dpd, gls, geodis, mondialRelay, lettres, ...PLANNED.map(planned)];
+const carriers = [kuehne, delivengo, dpd, gls, geodis, mondialRelay, lettres, bls, ...PLANNED.map(planned)];
 const byId = Object.fromEntries(carriers.map((c) => [c.id, c]));
 
 /** Metadonnees publiques (pour l'UI), sans exposer process(). */

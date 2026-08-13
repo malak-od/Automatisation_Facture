@@ -2,6 +2,7 @@
   "carrier": "MONDIAL-RELAY",
   "csv": { "encoding": "latin1", "sep": ";" },
   "cols": {
+    "nrFacture": "Nr de facture",
     "trackingBrut": "Nr expédition",
     "nom": "Nom",
     "pays": "Pays de livraison",
@@ -14,6 +15,9 @@
     "gazole": "Indexation gasoil",
     "date": "Date"
   },
+
+  "_comment_lignes_vides": "Colonnes O->W du CSV brut (Pays de livraison, Relais de livraison, Nom du relais, Code postal, Nbr colis, Poids en gr, Point de remise, Montant de CRT cent, Valeur vente) : si TOUTES sont vides sur une ligne, c'est une ligne sans aucune information exploitable (pas juste 'Fret=0' legitime) -> supprimee du resultat (decision utilisateur 2026-08-10, constate sur juillet 2026 : ~1500 lignes de ce type generant des alertes FRET=0 en cascade).",
+  "cols_ow": ["Pays de livraison", "Relais de livraison", "Nom du relais", "Code postal", "Nbr colis", "Poids en gr", "Point de remise", "Montant de CRT cent", "Valeur vente"],
   "champs_fixes": { "Transporteur": "MONDIAL-RELAY", "E/P": "P", "tva": 0.2 },
 
   "_comment_zone": "Onglet 'Pays' du classeur fait a la main (2026_06_Facture Mondial Relay.xlsx) : cle = Mode brut + '-' + Pays -> zone normalisee. Contient DEJA les entrees 24RC-FR et LCC-FR -> 24R-FR (la substitution 24RC/LCC->24R mentionnee dans les notes terrain est en realite geree par cette table de lookup, pas par un remplacement texte). Comprend aussi des consolidations tarifaires (LU/HOM -> zone BE, BE/24R -> zone FR).",

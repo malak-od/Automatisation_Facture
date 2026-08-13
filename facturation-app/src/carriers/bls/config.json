@@ -1,0 +1,16 @@
+{
+  "carrier": "BLS",
+  "champs_fixes": { "Transporteur": "BLS", "E/P": "E", "Pays": "France", "Zone": "France", "Mode": "ST", "tva": 0.2 },
+
+  "_comment_source": "Source UNIQUE = la facture PDF recue (decision utilisateur 2026-08-11) -- le xlsx brut equivalent contient la MEME donnee mais en mise en page facture avec cellules fusionnees non alignees entre l'en-tete et les lignes de donnees (source d'erreurs de parsing constatee en pratique : premiere version du carrier basee sur le xlsx perdait des lignes). Le texte PDF est un format lineaire plus simple/fiable a parser : chaque ligne 'Dossier' est identifiee par le motif 'DD/MM/AAAA NNNNNNNN ...' (date + dossier 8 chiffres).",
+
+  "_comment_2lignes": "Piege specifique BLS : certains dossiers ont un commentaire 'V/Ref ...' (ou rien du tout) sur leur propre ligne PDF, sans montant -- la vraie description de trajet + le montant sont sur la ligne SUIVANTE (retour a la ligne PDF). Fusionnes en un seul item avec un retour a la ligne dans le libelle (ex. 'V/Ref HYD06260004 2764316\\nDe 21 Creancey  A 21 Ouges'). Confirme sur juin ET juillet 2026 (15 et 28 items logiques respectivement).",
+
+  "_comment_montant_nul": "Une ligne 'Dossier' SANS AUCUN montant trouvable (ni sur sa ligne, ni sur la suivante) est un montant REELEMENT NUL, PAS une ligne a ignorer -- confirme sur juillet 2026 (Dossier 13301, 'Vannes') en comparant la somme des montants trouves au Total H.T. officiel de la facture : la somme des 27 autres lignes egalait deja EXACTEMENT le total, donc 13301 = 0,00EUR.",
+
+  "_comment_idclient": "Colonne 'ID Client' de 'Factures BLS' et 'Id client' de 'Import CSV' : TOUJOURS VIDE dans le PDF/xlsx recu (confirme par les 2 videos process ET les factures de juin/juillet -- ni le classeur ni le portail AffreTrans ne montrent de mecanisme de determination/saisie de ce code). Laisse vide ici aussi, fidele au process reel -- rempli a la main par le pole transport APRES coup dans le classeur reel (PAS de table de correspondance equivalente a 'Comptes' de Mondial Relay identifiee pour BLS).",
+
+  "_comment_poids_colis": "Nbr Colis/Poids ('Import CSV' colonnes K/L) sont des VALEURS SAISIES A LA MAIN dans le classeur fait a la main, ne correspondent a AUCUNE colonne de la facture BLS -- la video 1 montre qu'elles viennent d'un RECHERCHEX vers un export du portail 'AffreTrans' (outil d'affretement partage La Ruche Logistique, colonnes J='Poids (kg)'/P='Nb palettes', joint sur Dossier='Tracking'), fichier externe non disponible localement. Laisses a 0 ici avec une alerte -- a completer manuellement par le pole transport comme aujourd'hui.",
+
+  "_comment_pdf": "PAS de balises structurees <ref> (contrairement a Mondial Relay/DPD) -- format visuel pur. Numero de facture = bloc 'N Client'+7 chiffres+date+folio colles/espaces ensemble dans l'en-tete. Total HT = 1re des 3 lignes-nombres isolees juste avant '...EUR' en fin de facture. cote Node (pdf-parse) : mojibake connu sur 7 caracteres accentues (voir MOJIBAKE_MAP dans index.js), corrige avant toute utilisation du texte -- cote Python (pypdf) le texte est deja correctement encode, pas de correction necessaire."
+}
