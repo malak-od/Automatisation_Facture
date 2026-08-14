@@ -15,6 +15,7 @@ const mondialRelay = require('./carriers/mondial_relay');
 const lettres = require('./carriers/lettres');
 const bls = require('./carriers/bls');
 const chronopost = require('./carriers/chronopost');
+const colissimo = require('./carriers/colissimo');
 
 function planned(meta) {
   return {
@@ -32,9 +33,6 @@ const PLANNED = [
   { id: 'ups', name: 'UPS', viticolis: true, taxeGasoil: 'Filles Viticolis',
     method: "Telecharger les factures du Billing (sauf 0EUR et notes de credit, filtrer le compte 80X7Y5), CSV, trier trackings, reclasser. E/P via export brut m/m-1/m-2. Colis 1Z79 -> demande d'avoir.",
     inputs: [{ key: 'csv', label: 'Factures Billing UPS (CSV/Excel)', accept: '.csv,.xlsx', multiple: true, required: true }] },
-  { id: 'colissimo', name: 'Colissimo', taxeGasoil: 'Site La Poste (coeff. energetique)',
-    method: "CSV prestation Colis + douanes, trier, ajouter les postes en fin de colonne, MAJ TCD, comparer PDF HT + indemnisation.",
-    inputs: [{ key: 'csv', label: 'CSV prestation Colis + douanes', accept: '.csv', multiple: true, required: true }] },
   { id: 'fedex', name: 'FedEx', taxeGasoil: 'Facture PDF (TG France/International)',
     method: "Ouvrir CSV shipment detail, remplacer . par ,, E/P via export brut m/m-1, verifier FICP (IE/RE), MAJ TCD, gerer droits & taxes.",
     inputs: [{ key: 'csv', label: 'Shipment detail (CSV)', accept: '.csv', multiple: true, required: true },
@@ -44,7 +42,7 @@ const PLANNED = [
     inputs: [{ key: 'facture', label: 'Facture TNT', accept: '.xlsx,.csv', multiple: false, required: true }] },
 ];
 
-const carriers = [kuehne, delivengo, dpd, gls, geodis, mondialRelay, lettres, bls, chronopost, ...PLANNED.map(planned)];
+const carriers = [kuehne, delivengo, dpd, gls, geodis, mondialRelay, lettres, bls, chronopost, colissimo, ...PLANNED.map(planned)];
 const byId = Object.fromEntries(carriers.map((c) => [c.id, c]));
 
 /** Metadonnees publiques (pour l'UI), sans exposer process(). */

@@ -354,7 +354,12 @@ def main():
             date_val = to_excel_serial_from_ddmmyyyy(it["date"])
             aff = affretement_map.get(it["dossier"])
             data.append([
-                (aff["id_client"] or None) if aff else None,  # A ID Client (via export affretement, sinon vide)
+                # A ID Client : TOUJOURS vide en sortie (decision utilisateur 2026-08-14) --
+                # meme quand l'export AffreTrans fournit une valeur, ce n'est pas le vrai ID
+                # client ERP attendu ici. Reste a saisir manuellement par le pole transport
+                # apres coup (le TCD "Bilan client", RowField="ID Client", se reactualise de
+                # lui-meme par simple RefreshAll une fois la colonne renseignee a la main).
+                None,
                 it["n_facture"],                    # B n facture
                 date_val,                           # C Date Prestation
                 it["dossier"],                      # D Dossier

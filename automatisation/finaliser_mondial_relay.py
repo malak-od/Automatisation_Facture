@@ -297,6 +297,63 @@ def fill_reconciliation(wb, pdfs):
     print(f"Réconciliation PDF : {matched}/{len(pdfs)} facture(s) rapprochée(s) dans Controle xls pdf.")
 
 
+def apply_ecart_conditional_formatting(wb):
+    """Onglet 'Controle xls pdf' : le modele n'a une mise en forme conditionnelle
+    (rouge si != 0, cf. couleur du modele) QUE sur la colonne N ('Ecarts', figee sur
+    la plage N3:N60 du modele) -- la colonne R ('Ecart TTC', meme calcul mais contre
+    le PDF/TTC) n'en a AUCUNE. Regle communiquee par le pole transport (2026-08-14) :
+    mettre en rouge les 2 colonnes d'ecart des que le TCD ne matche pas. On (1) reprend
+    exactement le meme dxf (couleur/format) que celui deja utilise sur N, (2) l'applique
+    aussi a R, et (3) etend les 2 plages a la hauteur REELLE du TCD de ce mois (le TCD
+    change de taille chaque mois -- une plage figee comme N3:N60 du modele laisserait
+    les lignes au-dela de 60 sans mise en forme, ou raterait des factures supplementaires)."""
+    xlUp = -4162
+    xlCellValue = 1
+    xlNotEqual = 4
+    ws = wb.Sheets("Controle xls pdf")
+    lastJ = ws.Cells(ws.Rows.Count, 10).End(xlUp).Row  # J = etiquettes de lignes (TCD)
+    header_row = None
+    for r in range(1, lastJ + 1):
+        if str(ws.Cells(r, 10).Value or "").strip() == "Étiquettes de lignes":
+            header_row = r
+            break
+    start = (header_row or 2) + 1
+    if lastJ < start:
+        return
+
+    # Style rouge du modele : recupere depuis la 1re FormatCondition existante de N
+    # (deja "!= 0 -> rouge", cf. docstring) pour rester visuellement identique, plutot
+    # que de coder une couleur en dur qui pourrait diverger du reste du classeur.
+    nRange = ws.Range(ws.Cells(3, 14), ws.Cells(3, 14))  # N3, cellule modele de reference
+    modelInterior = None
+    modelFont = None
+    for i in range(1, nRange.FormatConditions.Count + 1):
+        fc = nRange.FormatConditions(i)
+        if fc.Operator == xlNotEqual:
+            modelInterior = fc.Interior.Color
+            try:
+                modelFont = fc.Font.Color
+            except Exception:
+                modelFont = None
+            break
+
+    for colIdx, colLetter in ((14, "N"), (18, "R")):  # N, R
+        rng = ws.Range(ws.Cells(start, colIdx), ws.Cells(lastJ, colIdx))
+        rng.FormatConditions.Delete()
+        fc = rng.FormatConditions.Add(Type=xlCellValue, Operator=xlNotEqual, Formula1="0")
+        if modelInterior is not None:
+            fc.Interior.Color = modelInterior
+        else:
+            fc.Interior.Color = 255  # rouge (BGR) par defaut si le modele n'en a pas
+        if modelFont is not None:
+            try:
+                fc.Font.Color = modelFont
+            except Exception:
+                pass
+        fc.StopIfTrue = False
+    print(f"Mise en forme conditionnelle (ecart != 0 -> rouge) appliquee sur N{start}:N{lastJ} et R{start}:R{lastJ}.")
+
+
 def parse_args(argv):
     modele, sortie = argv[1], argv[2]
     inputs, pdfs, cur = [], [], "in"
@@ -385,6 +442,7 @@ def main():
         i_complement = col_index(header, "Complément")
         i_semi = col_index(header, "Semi")
         i_code_client = col_index(header, "Code client chargeur")
+        i_mode = col_index(header, "Mode de livraison")
         col_track = col_letter(FIRST_RAW_COL - 1 + i_track) if i_track is not None else None
         col_gazole = col_letter(FIRST_RAW_COL - 1 + i_gazole) if i_gazole is not None else None
         col_htva = col_letter(FIRST_RAW_COL - 1 + i_total_htva) if i_total_htva is not None else None
@@ -392,6 +450,7 @@ def main():
         col_complement = col_letter(FIRST_RAW_COL - 1 + i_complement) if i_complement is not None else None
         col_semi = col_letter(FIRST_RAW_COL - 1 + i_semi) if i_semi is not None else None
         col_code_client = col_letter(FIRST_RAW_COL - 1 + i_code_client) if i_code_client is not None else None
+        col_mode = col_letter(FIRST_RAW_COL - 1 + i_mode) if i_mode is not None else None
 
         formulas_ad = {}
         # 'Clients' (colonne A) = code numerique du client, saisi A LA MAIN par le pole
@@ -468,6 +527,21 @@ def main():
         else:
             print("AVERTISSEMENT: 'Mnt.Trans. Poids Mes' ou 'Complément' introuvable -> "
                   "formules Q2/T2 (Zones éloignées/Frêt) non corrigées, restent celles du modèle (seuil 0,03).")
+
+        # M2 (mode envoi) : le modele reference directement le mode BRUT ('Facture Mondial
+        # Relay'!O2, colonne source 'Mode de livraison'), sans normalisation. Regle communiquee
+        # par le pole transport (2026-08-14) : '24RC'/'LCC' doivent devenir '24R' DANS LA VALEUR
+        # AFFICHEE elle-meme (pas seulement la cle de lookup zone J2, qui resolvait deja bien la
+        # zone via la table 'Pays' contenant '24RC-FR'/'LCC-FR'->'24R-FR') -- sinon l'ERP, qui
+        # refait son propre lookup de zone a partir du mode envoi affiche, tombe sur une
+        # combinaison "inconnue" -> avaries d'import.
+        if col_mode:
+            wsImp.Cells(2, 13).Formula = (
+                f"=IF(OR('Facture Mondial Relay'!{col_mode}2=\"24RC\",'Facture Mondial Relay'!{col_mode}2=\"LCC\"),"
+                f"\"24R\",'Facture Mondial Relay'!{col_mode}2)")
+        else:
+            print("AVERTISSEMENT: 'Mode de livraison' introuvable -> formule M2 (mode envoi) "
+                  "non corrigée, reste la référence brute du modèle (24RC/LCC non normalisés).")
         if newLast > 2:
             retry(lambda: wsImp.Range(wsImp.Cells(2, 1), wsImp.Cells(newLast, LAST_COL_IMPORT)).FillDown())
         if newLast < oldLastImp:
@@ -560,6 +634,14 @@ def main():
             fill_reconciliation(wb, pdfs)
         except Exception as e:
             print("Réconciliation Controle xls pdf ignorée :", e)
+
+        # 5) Mise en forme conditionnelle (ecarts N/R en rouge) : APRES fill_reconciliation
+        #    (Q doit etre rempli pour que R = Q-O soit significatif) et sur la hauteur REELLE
+        #    du TCD deja rafraichi plus haut.
+        try:
+            apply_ecart_conditional_formatting(wb)
+        except Exception as e:
+            print("Mise en forme conditionnelle des écarts ignorée :", e)
 
         xl.Calculate()
         retry(lambda: wb.Save())

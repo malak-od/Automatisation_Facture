@@ -426,6 +426,9 @@ async function process(files) {
     };
   });
 
+  // Fichier import trie par "N° Tracking" (Numero LT) A -> Z (decision utilisateur 2026-08-13).
+  importRows.sort((a, b) => (a.Tracking < b.Tracking ? -1 : a.Tracking > b.Tracking ? 1 : 0));
+
   const { alerts, infos: valInfos } = validate(importRows, { skipPoidsDecimal: true });
   infos.push(...valInfos);
 

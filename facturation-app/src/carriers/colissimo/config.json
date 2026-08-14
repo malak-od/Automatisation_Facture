@@ -1,0 +1,2913 @@
+{
+  "carrier": "COLISSIMO",
+  "_comment_source": "2 fichiers CSV bruts (separateur ';', encodage latin1/cp1252) : 'CSV_Prestations_au_colis.csv' (26 colonnes, N de ligne->Type de charge) et 'CSV_Frais_de_douane.csv' (20 colonnes, structure differente : Droit de douane/TVA importation/Octroi de mer/Frais de gestion/Autres taxes). Colles a la suite dans 'Facture Colissimo' a partir de la colonne H (colonnes A-G calculees). Confirme sur le fichier reel de juin 2026 (11716 lignes prestations + 13 lignes douane) et la transcription video Documentation/Video_Colissimo_1_Preparation_fichier_import.md. Le 3e CSV 'CSV_Indemnisations.csv' n'est JAMAIS utilise (confirme utilisateur 2026-08-14) -- pas de logique dediee a coder.",
+  "_comment_table_correspondance": "Feuille 'Table de correspondance' du classeur modele -- mapping 'Code charge' (colonne AD/26 du CSV Prestations, ou colonne 'Code charge' du CSV Frais de douane) -> poste ERP. 26 codes confirmes exhaustivement sur le fichier reel.",
+  "table_correspondance": {
+    "CH_CAP": "Taxe gazole",
+    "CH_P_6A": "Frêt",
+    "CH_P_6C": "Frêt",
+    "CH_P_6H": "Frêt",
+    "CH_P_6M": "Frêt",
+    "CH_P_7R": "Frêt",
+    "CH_P_8Q": "Frêt",
+    "CH_P_9W": "Frêt",
+    "CH_P_CA": "Frêt",
+    "CH_P_CB": "Frêt",
+    "CH_P_EY": "Frêt",
+    "CH_O_A_ASSURANCE": "Assurance",
+    "CH_O_FTDDDP_DOUANEMARCHANDISE": "Droits et taxes",
+    "CH_S_D_DESTINATION": "Zones éloignées",
+    "CH_S_NM_NONMECANISABLE": "Colis volumineux",
+    "CH_S_PVR_POIDSVOLUMETRIQUEROUTIER": "Colis volumineux",
+    "CH_S_QA_QUALITEANNONCE": "Adresse",
+    "CH_S_REET_REETIQUETAGE": "Adresse",
+    "CH_S_SDE_DECARBONATION": "Frêt",
+    "CH_S_SI_SURETEINTERNATIONALE": "Frêt",
+    "CH_S_NCD_NONCONFORMITEDOUANIERE": "Droits et taxes",
+    "CH_P_8R": "Frêt",
+    "CH_DOUANE": "Droits et taxes",
+    "CH_S_PT_PARTENAIRETRANSPORT": "Frêt",
+    "CH_P_CG": "Frêt",
+    "CH_P_7Q": "Frêt"
+  },
+  "_comment_modes_envois": "Feuille 'Modes envois' -- mapping concatenation(prefixe tracking 2 lettres + code pays ISO) -> mode envoi ERP (colonne 'Zone' du modele, ex. 'FR_DOM') + TVA + mode de transport (DOM/DOS/etc). Cle de recherche = LEFT(N colis,2) & XLOOKUP(Pays Destination, Pays!A:A, Pays!B:B) -- confirme formule exacte 'Facture Colissimo'!D2 = E2&F2. 327 entrees extraites du fichier reel de juin 2026.",
+  "modes_envois": [
+    {
+      "concat": "5RFR",
+      "prefixe": "5R",
+      "pays": "FR",
+      "zone": "OM1_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "6AAD",
+      "prefixe": "6A",
+      "pays": "AD",
+      "zone": "FR_DOM",
+      "tva": 0.2,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "6AFR",
+      "prefixe": "6A",
+      "pays": "FR",
+      "zone": "FR_DOM",
+      "tva": 0.2,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "6AMC",
+      "prefixe": "6A",
+      "pays": "MC",
+      "zone": "FR_DOM",
+      "tva": 0.2,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "6AS1",
+      "prefixe": "6A",
+      "pays": "S1",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "6CAD",
+      "prefixe": "6C",
+      "pays": "AD",
+      "zone": "FR_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "6CFR",
+      "prefixe": "6C",
+      "pays": "FR",
+      "zone": "FR_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "6CMC",
+      "prefixe": "6C",
+      "pays": "MC",
+      "zone": "FR_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "6HFR",
+      "prefixe": "6H",
+      "pays": "FR",
+      "zone": "FR_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "6HMC",
+      "prefixe": "6H",
+      "pays": "MC",
+      "zone": "FR_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "6MCH",
+      "prefixe": "6M",
+      "pays": "CH",
+      "zone": "3_retrait",
+      "tva": 0,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "6MFR",
+      "prefixe": "6M",
+      "pays": "FR",
+      "zone": "FR_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "7QBL",
+      "prefixe": "7Q",
+      "pays": "BL",
+      "zone": "OM1_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7QFR",
+      "prefixe": "7Q",
+      "pays": "FR",
+      "zone": "OM1_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7QGF",
+      "prefixe": "7Q",
+      "pays": "GF",
+      "zone": "OM1_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7QGP",
+      "prefixe": "7Q",
+      "pays": "GP",
+      "zone": "OM1_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7QMF",
+      "prefixe": "7Q",
+      "pays": "MF",
+      "zone": "OM2_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7QMQ",
+      "prefixe": "7Q",
+      "pays": "MQ",
+      "zone": "OM1_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7QNC",
+      "prefixe": "7Q",
+      "pays": "NC",
+      "zone": "OM2_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7QPF",
+      "prefixe": "7Q",
+      "pays": "PF",
+      "zone": "OM2_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7QRE",
+      "prefixe": "7Q",
+      "pays": "RE",
+      "zone": "OM1_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7QSX",
+      "prefixe": "7Q",
+      "pays": "SX",
+      "zone": "OM1_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7QWF",
+      "prefixe": "7Q",
+      "pays": "WF",
+      "zone": "OM2_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7QYT",
+      "prefixe": "7Q",
+      "pays": "YT",
+      "zone": "OM1_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7RBE",
+      "prefixe": null,
+      "pays": null,
+      "zone": "1_DOS_BE",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "7RFR",
+      "prefixe": null,
+      "pays": null,
+      "zone": "FR_DOM",
+      "tva": 0.2,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QBL",
+      "prefixe": "8Q",
+      "pays": "BL",
+      "zone": "OM1_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QFR",
+      "prefixe": "8Q",
+      "pays": "FR",
+      "zone": "OM1_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QGF",
+      "prefixe": "8Q",
+      "pays": "GF",
+      "zone": "OM1_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QGP",
+      "prefixe": "8Q",
+      "pays": "GP",
+      "zone": "OM1_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QMF",
+      "prefixe": null,
+      "pays": null,
+      "zone": "OM1_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QMQ",
+      "prefixe": "8Q",
+      "pays": "MQ",
+      "zone": "OM1_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QNC",
+      "prefixe": "8Q",
+      "pays": "NC",
+      "zone": "OM2_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QPF",
+      "prefixe": "8Q",
+      "pays": "PF",
+      "zone": "OM2_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QPM",
+      "prefixe": "8Q",
+      "pays": "PM",
+      "zone": "OM1_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QRE",
+      "prefixe": "8Q",
+      "pays": "RE",
+      "zone": "OM1_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QSX",
+      "prefixe": "8Q",
+      "pays": "SX",
+      "zone": "OM1_DOM",
+      "tva": 0.2,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QWF",
+      "prefixe": "8Q",
+      "pays": "WF",
+      "zone": "OM2_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8QYT",
+      "prefixe": "8Q",
+      "pays": "YT",
+      "zone": "OM1_DOM",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "8RFR",
+      "prefixe": "8R",
+      "pays": "FR",
+      "zone": "FR_DOM",
+      "tva": 0.2,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "9HFR",
+      "prefixe": "9H",
+      "pays": "FR",
+      "zone": "FR_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "9MFR",
+      "prefixe": "9M",
+      "pays": "FR",
+      "zone": "FR_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "9WFR",
+      "prefixe": null,
+      "pays": null,
+      "zone": "OM1_ECO",
+      "tva": 0,
+      "mode_transport": "ECO"
+    },
+    {
+      "concat": "9WGF",
+      "prefixe": null,
+      "pays": null,
+      "zone": "OM1_ECO",
+      "tva": 0,
+      "mode_transport": "ECO"
+    },
+    {
+      "concat": "9WGP",
+      "prefixe": null,
+      "pays": null,
+      "zone": "OM1_ECO",
+      "tva": 0,
+      "mode_transport": "ECO"
+    },
+    {
+      "concat": "9WMQ",
+      "prefixe": null,
+      "pays": null,
+      "zone": "OM1_ECO",
+      "tva": 0,
+      "mode_transport": "ECO"
+    },
+    {
+      "concat": "9WRE",
+      "prefixe": null,
+      "pays": null,
+      "zone": "OM1_ECO",
+      "tva": 0,
+      "mode_transport": "ECO"
+    },
+    {
+      "concat": "9WYT",
+      "prefixe": "9W",
+      "pays": "YT",
+      "zone": "OM1_ECO",
+      "tva": 0,
+      "mode_transport": "ECO"
+    },
+    {
+      "concat": "CABE",
+      "prefixe": "CA",
+      "pays": "BE",
+      "zone": "1_DOM_BE",
+      "tva": 0.2,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "CACH",
+      "prefixe": "CA",
+      "pays": "CH",
+      "zone": "3_DOM_CH",
+      "tva": 0,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "CBAT",
+      "prefixe": "CB",
+      "pays": "AT",
+      "zone": "2_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBBE",
+      "prefixe": "CB",
+      "pays": "BE",
+      "zone": "1_DOS_BE",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBBG",
+      "prefixe": "CB",
+      "pays": "BG",
+      "zone": "4_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBCH",
+      "prefixe": "CB",
+      "pays": "CH",
+      "zone": "3_DOS_CH",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBCY",
+      "prefixe": "CB",
+      "pays": "CY",
+      "zone": "4_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBCZ",
+      "prefixe": "CB",
+      "pays": "CZ",
+      "zone": "3_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBDE",
+      "prefixe": "CB",
+      "pays": "DE",
+      "zone": "1_DOS_DE",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBDK",
+      "prefixe": "CB",
+      "pays": "DK",
+      "zone": "3_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBDZ",
+      "prefixe": "CB",
+      "pays": "DZ",
+      "zone": "4_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBEE",
+      "prefixe": "CB",
+      "pays": "EE",
+      "zone": "3_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBES",
+      "prefixe": "CB",
+      "pays": "ES",
+      "zone": "2_DOS_ES",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBFI",
+      "prefixe": "CB",
+      "pays": "FI",
+      "zone": "4_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBFR",
+      "prefixe": "CB",
+      "pays": "FR",
+      "zone": "FR_DOM",
+      "tva": 0.2,
+      "mode_transport": "DOM"
+    },
+    {
+      "concat": "CBGB",
+      "prefixe": "CB",
+      "pays": "GB",
+      "zone": "2_DOS_UK",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBGR",
+      "prefixe": "CB",
+      "pays": "GR",
+      "zone": "4_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBGT",
+      "prefixe": "CB",
+      "pays": "GT",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBHR",
+      "prefixe": "CB",
+      "pays": "HR",
+      "zone": "4_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBHU",
+      "prefixe": "CB",
+      "pays": "HU",
+      "zone": "3_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBIC",
+      "prefixe": "CB",
+      "pays": "IC",
+      "zone": "4_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBIE",
+      "prefixe": "CB",
+      "pays": "IE",
+      "zone": "2_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBIS",
+      "prefixe": "CB",
+      "pays": "IS",
+      "zone": "4_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBIT",
+      "prefixe": "CB",
+      "pays": "IT",
+      "zone": "2_DOS_IT",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBKW",
+      "prefixe": null,
+      "pays": null,
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBLT",
+      "prefixe": "CB",
+      "pays": "LT",
+      "zone": "3_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBLU",
+      "prefixe": "CB",
+      "pays": "LU",
+      "zone": "1_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBLV",
+      "prefixe": "CB",
+      "pays": "LV",
+      "zone": "3_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBMA",
+      "prefixe": "CB",
+      "pays": "MA",
+      "zone": "4_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBMT",
+      "prefixe": "CB",
+      "pays": "MT",
+      "zone": "4_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBMU",
+      "prefixe": "CB",
+      "pays": "MU",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBNL",
+      "prefixe": "CB",
+      "pays": "NL",
+      "zone": "1_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBNO",
+      "prefixe": "CB",
+      "pays": "NO",
+      "zone": "4_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBPL",
+      "prefixe": "CB",
+      "pays": "PL",
+      "zone": "3_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBPT",
+      "prefixe": "CB",
+      "pays": "PT",
+      "zone": "2_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBRO",
+      "prefixe": "CB",
+      "pays": "RO",
+      "zone": "4_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBS1",
+      "prefixe": null,
+      "pays": null,
+      "zone": "FR_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBSE",
+      "prefixe": "CB",
+      "pays": "SE",
+      "zone": "3_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBSI",
+      "prefixe": "CB",
+      "pays": "SI",
+      "zone": "3_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBSK",
+      "prefixe": "CB",
+      "pays": "SK",
+      "zone": "3_DOS_autres",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBSM",
+      "prefixe": "CB",
+      "pays": "SM",
+      "zone": "2_DOS_IT",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBTD",
+      "prefixe": "CB",
+      "pays": "TD",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBTN",
+      "prefixe": "CB",
+      "pays": "TN",
+      "zone": "4_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CIAT",
+      "prefixe": "CI",
+      "pays": "AT",
+      "zone": "2_retrait_autres",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIBE",
+      "prefixe": "CI",
+      "pays": "BE",
+      "zone": "1_retrait_BE",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIBG",
+      "prefixe": "CI",
+      "pays": "BG",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CICH",
+      "prefixe": "CI",
+      "pays": "CH",
+      "zone": "3_retrait",
+      "tva": 0,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CICY",
+      "prefixe": "CI",
+      "pays": "CY",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CICZ",
+      "prefixe": "CI",
+      "pays": "CZ",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIDE",
+      "prefixe": "CI",
+      "pays": "DE",
+      "zone": "1_retrait_DE",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIDK",
+      "prefixe": "CI",
+      "pays": "DK",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIEE",
+      "prefixe": "CI",
+      "pays": "EE",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIES",
+      "prefixe": "CI",
+      "pays": "ES",
+      "zone": "2_retrait_ES",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIFI",
+      "prefixe": "CI",
+      "pays": "FI",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIGB",
+      "prefixe": "CI",
+      "pays": "GB",
+      "zone": "2_retrait_UK",
+      "tva": 0,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIGR",
+      "prefixe": "CI",
+      "pays": "GR",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIHR",
+      "prefixe": "CI",
+      "pays": "HR",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIHU",
+      "prefixe": "CI",
+      "pays": "HU",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIIC",
+      "prefixe": "CI",
+      "pays": "IC",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIIE",
+      "prefixe": "CI",
+      "pays": "IE",
+      "zone": "2_retrait_autres",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIIS",
+      "prefixe": "CI",
+      "pays": "IS",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIIT",
+      "prefixe": "CI",
+      "pays": "IT",
+      "zone": "2_retrait_IT",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CILT",
+      "prefixe": "CI",
+      "pays": "LT",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CILU",
+      "prefixe": "CI",
+      "pays": "LU",
+      "zone": "1_retrait_autres",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CILV",
+      "prefixe": "CI",
+      "pays": "LV",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIMT",
+      "prefixe": "CI",
+      "pays": "MT",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CINL",
+      "prefixe": "CI",
+      "pays": "NL",
+      "zone": "1_retrait_autres",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CINO",
+      "prefixe": "CI",
+      "pays": "NO",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIPL",
+      "prefixe": "CI",
+      "pays": "PL",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIPT",
+      "prefixe": "CI",
+      "pays": "PT",
+      "zone": "2_retrait_autres",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CIRO",
+      "prefixe": "CI",
+      "pays": "RO",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CISE",
+      "prefixe": "CI",
+      "pays": "SE",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CISI",
+      "prefixe": "CI",
+      "pays": "SI",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CISK",
+      "prefixe": "CI",
+      "pays": "SK",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMAT",
+      "prefixe": "CM",
+      "pays": "AT",
+      "zone": "2_retrait_autres",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMBE",
+      "prefixe": "CM",
+      "pays": "BE",
+      "zone": "1_retrait_BE",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMBG",
+      "prefixe": "CM",
+      "pays": "BG",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMCH",
+      "prefixe": "CM",
+      "pays": "CH",
+      "zone": "3_retrait",
+      "tva": 0,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMCY",
+      "prefixe": "CM",
+      "pays": "CY",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMCZ",
+      "prefixe": "CM",
+      "pays": "CZ",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMDE",
+      "prefixe": "CM",
+      "pays": "DE",
+      "zone": "1_retrait_DE",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMDK",
+      "prefixe": "CM",
+      "pays": "DK",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMEE",
+      "prefixe": "CM",
+      "pays": "EE",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMES",
+      "prefixe": "CM",
+      "pays": "ES",
+      "zone": "2_retrait_ES",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMFI",
+      "prefixe": "CM",
+      "pays": "FI",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMGB",
+      "prefixe": "CM",
+      "pays": "GB",
+      "zone": "2_retrait_UK",
+      "tva": 0,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMGR",
+      "prefixe": "CM",
+      "pays": "GR",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMHR",
+      "prefixe": "CM",
+      "pays": "HR",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMHU",
+      "prefixe": "CM",
+      "pays": "HU",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMIC",
+      "prefixe": "CM",
+      "pays": "IC",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMIE",
+      "prefixe": "CM",
+      "pays": "IE",
+      "zone": "2_retrait_autres",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMIS",
+      "prefixe": "CM",
+      "pays": "IS",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMIT",
+      "prefixe": "CM",
+      "pays": "IT",
+      "zone": "2_retrait_IT",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMLT",
+      "prefixe": "CM",
+      "pays": "LT",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMLU",
+      "prefixe": "CM",
+      "pays": "LU",
+      "zone": "1_retrait_autres",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMLV",
+      "prefixe": "CM",
+      "pays": "LV",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMMT",
+      "prefixe": "CM",
+      "pays": "MT",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMNL",
+      "prefixe": "CM",
+      "pays": "NL",
+      "zone": "1_retrait_autres",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMNO",
+      "prefixe": "CM",
+      "pays": "NO",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMPL",
+      "prefixe": "CM",
+      "pays": "PL",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMPT",
+      "prefixe": "CM",
+      "pays": "PT",
+      "zone": "2_retrait_autres",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMRO",
+      "prefixe": "CM",
+      "pays": "RO",
+      "zone": "4_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMSE",
+      "prefixe": "CM",
+      "pays": "SE",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMSI",
+      "prefixe": "CM",
+      "pays": "SI",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "CMSK",
+      "prefixe": "CM",
+      "pays": "SK",
+      "zone": "3_retrait",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    },
+    {
+      "concat": "EYAE",
+      "prefixe": "EY",
+      "pays": "AE",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYAF",
+      "prefixe": "EY",
+      "pays": "AF",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYAG",
+      "prefixe": "EY",
+      "pays": "AG",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYAI",
+      "prefixe": "EY",
+      "pays": "AI",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYAL",
+      "prefixe": "EY",
+      "pays": "AL",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYAM",
+      "prefixe": "EY",
+      "pays": "AM",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYAO",
+      "prefixe": "EY",
+      "pays": "AO",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYAR",
+      "prefixe": "EY",
+      "pays": "AR",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYAS",
+      "prefixe": "EY",
+      "pays": "AS",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYAU",
+      "prefixe": "EY",
+      "pays": "AU",
+      "zone": "5_DOS_autres",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYAW",
+      "prefixe": "EY",
+      "pays": "AW",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYAZ",
+      "prefixe": "EY",
+      "pays": "AZ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBA",
+      "prefixe": "EY",
+      "pays": "BA",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBB",
+      "prefixe": "EY",
+      "pays": "BB",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBD",
+      "prefixe": "EY",
+      "pays": "BD",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBF",
+      "prefixe": "EY",
+      "pays": "BF",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBH",
+      "prefixe": "EY",
+      "pays": "BH",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBI",
+      "prefixe": "EY",
+      "pays": "BI",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBJ",
+      "prefixe": "EY",
+      "pays": "BJ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBM",
+      "prefixe": "EY",
+      "pays": "BM",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBN",
+      "prefixe": "EY",
+      "pays": "BN",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBO",
+      "prefixe": "EY",
+      "pays": "BO",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBQ",
+      "prefixe": "EY",
+      "pays": "BQ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBR",
+      "prefixe": "EY",
+      "pays": "BR",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBS",
+      "prefixe": "EY",
+      "pays": "BS",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBT",
+      "prefixe": "EY",
+      "pays": "BT",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBW",
+      "prefixe": "EY",
+      "pays": "BW",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBY",
+      "prefixe": "EY",
+      "pays": "BY",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYBZ",
+      "prefixe": "EY",
+      "pays": "BZ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCA",
+      "prefixe": "EY",
+      "pays": "CA",
+      "zone": "5_DOS_autres",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCD",
+      "prefixe": "EY",
+      "pays": "CD",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCF",
+      "prefixe": "EY",
+      "pays": "CF",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCG",
+      "prefixe": "EY",
+      "pays": "CG",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCI",
+      "prefixe": "EY",
+      "pays": "CI",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCK",
+      "prefixe": "EY",
+      "pays": "CK",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCL",
+      "prefixe": "EY",
+      "pays": "CL",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCM",
+      "prefixe": "EY",
+      "pays": "CM",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCN",
+      "prefixe": "EY",
+      "pays": "CN",
+      "zone": "5_DOS_CN",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCO",
+      "prefixe": "EY",
+      "pays": "CO",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCR",
+      "prefixe": "EY",
+      "pays": "CR",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCV",
+      "prefixe": "EY",
+      "pays": "CV",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYCW",
+      "prefixe": "EY",
+      "pays": "CW",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYDJ",
+      "prefixe": "EY",
+      "pays": "DJ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYDM",
+      "prefixe": "EY",
+      "pays": "DM",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYDO",
+      "prefixe": "EY",
+      "pays": "DO",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYDZ",
+      "prefixe": "EY",
+      "pays": "DZ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYEC",
+      "prefixe": "EY",
+      "pays": "EC",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYEG",
+      "prefixe": "EY",
+      "pays": "EG",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYER",
+      "prefixe": "EY",
+      "pays": "ER",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYET",
+      "prefixe": "EY",
+      "pays": "ET",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYFJ",
+      "prefixe": "EY",
+      "pays": "FJ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYFM",
+      "prefixe": "EY",
+      "pays": "FM",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYFO",
+      "prefixe": "EY",
+      "pays": "FO",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGA",
+      "prefixe": "EY",
+      "pays": "GA",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGD",
+      "prefixe": "EY",
+      "pays": "GD",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGE",
+      "prefixe": "EY",
+      "pays": "GE",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGG",
+      "prefixe": "EY",
+      "pays": "GG",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGH",
+      "prefixe": "EY",
+      "pays": "GH",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGI",
+      "prefixe": "EY",
+      "pays": "GI",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGL",
+      "prefixe": "EY",
+      "pays": "GL",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGM",
+      "prefixe": "EY",
+      "pays": "GM",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGN",
+      "prefixe": "EY",
+      "pays": "GN",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGT",
+      "prefixe": "EY",
+      "pays": "GT",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGU",
+      "prefixe": "EY",
+      "pays": "GU",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGW",
+      "prefixe": "EY",
+      "pays": "GW",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYGY",
+      "prefixe": "EY",
+      "pays": "GY",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYHK",
+      "prefixe": "EY",
+      "pays": "HK",
+      "zone": "5_DOS_autres",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYHN",
+      "prefixe": "EY",
+      "pays": "HN",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYHT",
+      "prefixe": "EY",
+      "pays": "HT",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYID",
+      "prefixe": "EY",
+      "pays": "ID",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYIL",
+      "prefixe": "EY",
+      "pays": "IL",
+      "zone": "5_DOS_autres",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYIN",
+      "prefixe": "EY",
+      "pays": "IN",
+      "zone": "5_DOS_autres",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYIQ",
+      "prefixe": "EY",
+      "pays": "IQ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYIR",
+      "prefixe": "EY",
+      "pays": "IR",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYJE",
+      "prefixe": "EY",
+      "pays": "JE",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYJM",
+      "prefixe": "EY",
+      "pays": "JM",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYJO",
+      "prefixe": "EY",
+      "pays": "JO",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYJP",
+      "prefixe": "EY",
+      "pays": "JP",
+      "zone": "5_DOS_autres",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYKE",
+      "prefixe": "EY",
+      "pays": "KE",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYKG",
+      "prefixe": "EY",
+      "pays": "KG",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYKH",
+      "prefixe": "EY",
+      "pays": "KH",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYKI",
+      "prefixe": "EY",
+      "pays": "KI",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYKM",
+      "prefixe": "EY",
+      "pays": "KM",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYKN",
+      "prefixe": "EY",
+      "pays": "KN",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYKR",
+      "prefixe": "EY",
+      "pays": "KR",
+      "zone": "5_DOS_autres",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYKV",
+      "prefixe": "EY",
+      "pays": "KV",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYKW",
+      "prefixe": "EY",
+      "pays": "KW",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYKY",
+      "prefixe": "EY",
+      "pays": "KY",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYKZ",
+      "prefixe": "EY",
+      "pays": "KZ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYLA",
+      "prefixe": "EY",
+      "pays": "LA",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYLB",
+      "prefixe": "EY",
+      "pays": "LB",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYLC",
+      "prefixe": "EY",
+      "pays": "LC",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYLI",
+      "prefixe": "EY",
+      "pays": "LI",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYLK",
+      "prefixe": "EY",
+      "pays": "LK",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYLR",
+      "prefixe": "EY",
+      "pays": "LR",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYLS",
+      "prefixe": "EY",
+      "pays": "LS",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMA",
+      "prefixe": null,
+      "pays": null,
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMD",
+      "prefixe": "EY",
+      "pays": "MD",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYME",
+      "prefixe": "EY",
+      "pays": "ME",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMG",
+      "prefixe": "EY",
+      "pays": "MG",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMH",
+      "prefixe": "EY",
+      "pays": "MH",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMK",
+      "prefixe": "EY",
+      "pays": "MK",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYML",
+      "prefixe": "EY",
+      "pays": "ML",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMM",
+      "prefixe": "EY",
+      "pays": "MM",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMN",
+      "prefixe": "EY",
+      "pays": "MN",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMO",
+      "prefixe": "EY",
+      "pays": "MO",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMP",
+      "prefixe": "EY",
+      "pays": "MP",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMR",
+      "prefixe": "EY",
+      "pays": "MR",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMS",
+      "prefixe": "EY",
+      "pays": "MS",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMU",
+      "prefixe": "EY",
+      "pays": "MU",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMV",
+      "prefixe": "EY",
+      "pays": "MV",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMW",
+      "prefixe": "EY",
+      "pays": "MW",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMX",
+      "prefixe": "EY",
+      "pays": "MX",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMY",
+      "prefixe": "EY",
+      "pays": "MY",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYMZ",
+      "prefixe": "EY",
+      "pays": "MZ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYNA",
+      "prefixe": "EY",
+      "pays": "NA",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYNE",
+      "prefixe": "EY",
+      "pays": "NE",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYNG",
+      "prefixe": "EY",
+      "pays": "NG",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYNI",
+      "prefixe": "EY",
+      "pays": "NI",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYNP",
+      "prefixe": "EY",
+      "pays": "NP",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYNZ",
+      "prefixe": "EY",
+      "pays": "NZ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYOM",
+      "prefixe": "EY",
+      "pays": "OM",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYPA",
+      "prefixe": "EY",
+      "pays": "PA",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYPE",
+      "prefixe": "EY",
+      "pays": "PE",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYPG",
+      "prefixe": "EY",
+      "pays": "PG",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYPH",
+      "prefixe": "EY",
+      "pays": "PH",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYPK",
+      "prefixe": "EY",
+      "pays": "PK",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYPR",
+      "prefixe": "EY",
+      "pays": "PR",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYPS",
+      "prefixe": "EY",
+      "pays": "PS",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYPW",
+      "prefixe": "EY",
+      "pays": "PW",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYPY",
+      "prefixe": "EY",
+      "pays": "PY",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYQA",
+      "prefixe": "EY",
+      "pays": "QA",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYRS",
+      "prefixe": "EY",
+      "pays": "RS",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYRU",
+      "prefixe": "EY",
+      "pays": "RU",
+      "zone": "5_DOS_autres",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYRW",
+      "prefixe": "EY",
+      "pays": "RW",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYSA",
+      "prefixe": "EY",
+      "pays": "SA",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYSB",
+      "prefixe": "EY",
+      "pays": "SB",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYSC",
+      "prefixe": "EY",
+      "pays": "SC",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYSG",
+      "prefixe": "EY",
+      "pays": "SG",
+      "zone": "5_DOS_autres",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYSL",
+      "prefixe": "EY",
+      "pays": "SL",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYSM",
+      "prefixe": "EY",
+      "pays": "SM",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYSN",
+      "prefixe": "EY",
+      "pays": "SN",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYSR",
+      "prefixe": "EY",
+      "pays": "SR",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYSV",
+      "prefixe": "EY",
+      "pays": "SV",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYSZ",
+      "prefixe": "EY",
+      "pays": "SZ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTC",
+      "prefixe": "EY",
+      "pays": "TC",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTD",
+      "prefixe": "EY",
+      "pays": "TD",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTG",
+      "prefixe": "EY",
+      "pays": "TG",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTH",
+      "prefixe": "EY",
+      "pays": "TH",
+      "zone": "5_DOS_autres",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTJ",
+      "prefixe": "EY",
+      "pays": "TJ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTL",
+      "prefixe": "EY",
+      "pays": "TL",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTN",
+      "prefixe": "EY",
+      "pays": "TN",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTO",
+      "prefixe": "EY",
+      "pays": "TO",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTR",
+      "prefixe": "EY",
+      "pays": "TR",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTT",
+      "prefixe": "EY",
+      "pays": "TT",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTV",
+      "prefixe": "EY",
+      "pays": "TV",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTW",
+      "prefixe": "EY",
+      "pays": "TW",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYTZ",
+      "prefixe": "EY",
+      "pays": "TZ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYUA",
+      "prefixe": "EY",
+      "pays": "UA",
+      "zone": "6_DOS",
+      "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYUG",
+      "prefixe": "EY",
+      "pays": "UG",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYUS",
+      "prefixe": "EY",
+      "pays": "US",
+      "zone": "5_DOS_US",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYUY",
+      "prefixe": "EY",
+      "pays": "UY",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYUZ",
+      "prefixe": "EY",
+      "pays": "UZ",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYVC",
+      "prefixe": "EY",
+      "pays": "VC",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYVE",
+      "prefixe": "EY",
+      "pays": "VE",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYVG",
+      "prefixe": "EY",
+      "pays": "VG",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYVI",
+      "prefixe": "EY",
+      "pays": "VI",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYVN",
+      "prefixe": "EY",
+      "pays": "VN",
+      "zone": "5_DOS_autres",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYVU",
+      "prefixe": "EY",
+      "pays": "VU",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYWS",
+      "prefixe": "EY",
+      "pays": "WS",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYZA",
+      "prefixe": "EY",
+      "pays": "ZA",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYZM",
+      "prefixe": "EY",
+      "pays": "ZM",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "EYZW",
+      "prefixe": "EY",
+      "pays": "ZW",
+      "zone": "6_DOS",
+      "tva": 0,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CGBE",
+      "prefixe": "CG",
+      "pays": "BE",
+      "zone": "1_retrait_BE",
+      "tva": 0.2,
+      "mode_transport": "A2P"
+    }
+  ],
+  "_comment_pays": "Feuille 'Pays' -- mapping Nom pays complet (FR, tel qu'il apparait dans 'Pays Destination'/'Pays Origine' du CSV brut) -> code ISO 2 lettres. Lookup en amont de 'modes_envois' (le concat utilise le code ISO, pas le nom complet). 64 pays extraits du fichier reel.",
+  "pays": [
+    {
+      "nom": "AFRIQUE DU SUD",
+      "code": "ZA"
+    },
+    {
+      "nom": "ALBANIE",
+      "code": "AL"
+    },
+    {
+      "nom": "Algérie",
+      "code": "DZ"
+    },
+    {
+      "nom": "ALLEMAGNE",
+      "code": "DE"
+    },
+    {
+      "nom": "ARGENTINE",
+      "code": "AR"
+    },
+    {
+      "nom": "ANDORRE",
+      "code": "AD"
+    },
+    {
+      "nom": "ARABIE SAOUDITE",
+      "code": "SA"
+    },
+    {
+      "nom": "AUSTRALIE",
+      "code": "AU"
+    },
+    {
+      "nom": "AUTRICHE",
+      "code": "AT"
+    },
+    {
+      "nom": "BELGIQUE",
+      "code": "BE"
+    },
+    {
+      "nom": "BRESIL",
+      "code": "BR"
+    },
+    {
+      "nom": "BULGARIE",
+      "code": "BG"
+    },
+    {
+      "nom": "CAMEROUN",
+      "code": "CM"
+    },
+    {
+      "nom": "CANADA",
+      "code": "CA"
+    },
+    {
+      "nom": "CHINE",
+      "code": "CN"
+    },
+    {
+      "nom": "CHYPRE",
+      "code": "CY"
+    },
+    {
+      "nom": "CROATIE",
+      "code": "HR"
+    },
+    {
+      "nom": "DANEMARK",
+      "code": "DK"
+    },
+    {
+      "nom": "EMIRATS ARABES UNIS",
+      "code": "AE"
+    },
+    {
+      "nom": "ESPAGNE",
+      "code": "ES"
+    },
+    {
+      "nom": "ESTONIE",
+      "code": "EE"
+    },
+    {
+      "nom": "ETATS-UNIS",
+      "code": "US"
+    },
+    {
+      "nom": "FINLANDE",
+      "code": "FI"
+    },
+    {
+      "nom": "FRANCE",
+      "code": "FR"
+    },
+    {
+      "nom": "GRECE",
+      "code": "GR"
+    },
+    {
+      "nom": "GUADELOUPE",
+      "code": "GP"
+    },
+    {
+      "nom": "GUYANE FRANCAISE",
+      "code": "GF"
+    },
+    {
+      "nom": "HONG KONG",
+      "code": "HK"
+    },
+    {
+      "nom": "HONGRIE",
+      "code": "HU"
+    },
+    {
+      "nom": "IRLANDE",
+      "code": "IE"
+    },
+    {
+      "nom": "ITALIE",
+      "code": "IT"
+    },
+    {
+      "nom": "ISLANDE",
+      "code": "IS"
+    },
+    {
+      "nom": "ISRAEL",
+      "code": "IL"
+    },
+    {
+      "nom": "JAPON",
+      "code": "JP"
+    },
+    {
+      "nom": "JERSEY",
+      "code": "JE"
+    },
+    {
+      "nom": "LETTONIE",
+      "code": "LV"
+    },
+    {
+      "nom": "LITUANIE",
+      "code": "LT"
+    },
+    {
+      "nom": "LUXEMBOURG",
+      "code": "LU"
+    },
+    {
+      "nom": "MALTE",
+      "code": "MT"
+    },
+    {
+      "nom": "MARTINIQUE",
+      "code": "MQ"
+    },
+    {
+      "nom": "MAROC",
+      "code": "MA"
+    },
+    {
+      "nom": "MAYOTTE",
+      "code": "YT"
+    },
+    {
+      "nom": "MEXIQUE",
+      "code": "MX"
+    },
+    {
+      "nom": "MONACO",
+      "code": "MC"
+    },
+    {
+      "nom": "MONTENEGRO",
+      "code": "ME"
+    },
+    {
+      "nom": "NOUVELLES-CALEDONIE",
+      "code": "NC"
+    },
+    {
+      "nom": "NORVEGE",
+      "code": "NO"
+    },
+    {
+      "nom": "OMAN",
+      "code": "OM"
+    },
+    {
+      "nom": "PAYS-BAS",
+      "code": "NL"
+    },
+    {
+      "nom": "POLOGNE",
+      "code": "PL"
+    },
+    {
+      "nom": "PORTUGAL",
+      "code": "PT"
+    },
+    {
+      "nom": "REPUBLIQUE TCHEQUE",
+      "code": "CZ"
+    },
+    {
+      "nom": "REUNION",
+      "code": "RE"
+    },
+    {
+      "nom": "ROUMANIE",
+      "code": "RO"
+    },
+    {
+      "nom": "ROYAUME-UNI",
+      "code": "GB"
+    },
+    {
+      "nom": "SAINT-BARTHÉLEMY",
+      "code": "BL"
+    },
+    {
+      "nom": "SAINT-PIERRE-ET-MIQUELON",
+      "code": "PM"
+    },
+    {
+      "nom": "SECTEUR POSTAL",
+      "code": "FR"
+    },
+    {
+      "nom": "SERBIE",
+      "code": "RS"
+    },
+    {
+      "nom": "SLOVAQUIE",
+      "code": "SK"
+    },
+    {
+      "nom": "SLOVENIE",
+      "code": "SI"
+    },
+    {
+      "nom": "SUEDE",
+      "code": "SE"
+    },
+    {
+      "nom": "SUISSE",
+      "code": "CH"
+    },
+    {
+      "nom": "TURQUIE",
+      "code": "TR"
+    }
+  ],
+  "_comment_tva": "TVA calculee par regle simple depuis le CSV brut (colonne 'Taux TVA', PAS une table pays->TVA separee comme Chronopost/BLS) : =IF(Taux TVA CSV = 20, 0.2, 0) -- confirme formule exacte 'Import CSV'!N2. Tout taux different de 20 (0%, exports hors UE...) donne TVA=0.",
+  "_comment_taxe_gasoil": "PAS de taux a chercher sur le site Colissimo (contrairement a ce que suggeraient les notes du pole transport) -- le montant de taxe gasoil (categorie 'Taxe gazole', code CH_CAP) est DEJA CALCULE ET FOURNI PAR COLISSIMO dans le CSV brut (Description='CAE', Rubrique='AJUSTEMENT ENERGIE'). Confirme empiriquement (2026-08-14) : somme TCD colonne 'Taxe gazole' = 2165,36€ = 'Coefficient Ajustement Energie' du PDF reel de juin 2026, match exact au centime."
+}

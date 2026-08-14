@@ -13,3 +13,8 @@
 # Python
 __pycache__/
 *.pyc
+
+# Fichiers de test/verrou temporaires (jamais a committer)
+tmp_*.xlsx
+~$*.docx
+~$*.xlsx

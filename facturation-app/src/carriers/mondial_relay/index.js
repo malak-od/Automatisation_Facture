@@ -3,22 +3,18 @@
 //  Plusieurs fichiers CSV "Annexe_..." (1 par facture/compte). 1 ligne = 1 colis.
 //  Reclassement : Fret = Montant transport poids mesure [+ Complement si
 //  EXACTEMENT 0,03] ; Zones eloignees = Complement (sauf 0 ou 0,03) ; Zone =
-//  lookup Mode+Pays dans la table 'Pays' du classeur fait a la main (24RC/LCC
-//  normalises UNIQUEMENT pour cette cle de lookup -- le mode envoi AFFICHE
-//  dans le fichier d'import reste le mode brut tel quel, cf. commentaire plus
-//  bas). Indexation gasoil est reelle mais n'a pas de colonne dans le fichier
-//  d'import fait a la main -> geree a part dans l'ERP (note terrain
-//  "identique au mois precedent"), remontee en info uniquement pour le
-//  controle du total.
+//  lookup Mode+Pays dans la table 'Pays' du classeur fait a la main. Le mode
+//  envoi '24RC'/'LCC' est normalise en '24R' A LA FOIS pour la cle de lookup
+//  ET pour la valeur AFFICHEE dans le fichier d'import (regle communiquee par
+//  le pole transport, 2026-08-14 : laisser le mode brut affiche cree des
+//  zones "inconnues" cote ERP, qui refait son propre lookup zone a partir du
+//  mode envoi affiche -> avaries d'import). Indexation gasoil est reelle mais
+//  n'a pas de colonne dans le fichier d'import fait a la main -> geree a part
+//  dans l'ERP (note terrain "identique au mois precedent"), remontee en info
+//  uniquement pour le controle du total.
 //
 //  Verifie a 100% sur les montants (Fret/ZonesEloignees) contre le fichier
-//  fait a la main de juin 2026 (12308/12308 lignes). Limite connue et
-//  documentee, SANS IMPACT FINANCIER : 321/12308 lignes (2,6%) affichent un
-//  mode envoi '24RC' au lieu de '24R' attendu par la reference -- toutes ces
-//  lignes ont Fret=0 ET ZonesEloignees=0 (aucun montant facture), le motif
-//  exact de cette substitution partielle n'a pas ete identifie malgre
-//  plusieurs pistes testees (pays, complement, montant) -- laisse tel quel
-//  faute d'impact financier a corriger (2026-08-10).
+//  fait a la main de juin 2026 (12308/12308 lignes).
 //
 //  "Facture France" (compte LARUCH) : le PDF recu inclut un montant de
 //  COLLECTE (transport aller vers les clients depuis l'entrepot) qui n'est
@@ -125,13 +121,16 @@ async function process(files) {
     gazoleTotal += gazoleLigne;
 
     const pays = (r[iPays] || '').trim();
-    // 24RC et LCC -> 24R UNIQUEMENT pour la CLE DE LOOKUP de zone (sinon zones inconnues ->
-    // avaries d'import, cf. notes terrain + PDF p.9) -- le mode envoi AFFICHE dans le fichier
-    // d'import reste le mode BRUT tel quel (verifie sur le fichier fait a la main de juin 2026 :
-    // colonne 'mode envoi' contient bien '24RC'/'LCC' non substitues, 5987+74 lignes).
+    // 24RC et LCC -> 24R, a la fois pour la CLE DE LOOKUP de zone ET pour la valeur de mode
+    // envoi AFFICHEE dans le fichier d'import (regle communiquee par le pole transport,
+    // 2026-08-14) : laisser '24RC'/'LCC' affiches cree des zones "inconnues" cote ERP (qui
+    // fait son propre lookup a partir du mode envoi affiche) -> avaries d'import. Avant cette
+    // correction, seule la cle de lookup interne etait normalisee (le mode BRUT restait
+    // affiche tel quel, cf. ancien commentaire/limite documentee du 2026-08-10) -- desormais
+    // la meme normalisation s'applique aux deux usages.
     const modeBrut = (r[iMode] || '').trim();
-    const modeLookup = (modeBrut === '24RC' || modeBrut === 'LCC') ? '24R' : modeBrut;
-    const zoneKey = `${modeLookup}-${pays}`;
+    const mode = (modeBrut === '24RC' || modeBrut === 'LCC') ? '24R' : modeBrut;
+    const zoneKey = `${mode}-${pays}`;
     const zone = cfg.zone_table[zoneKey];
     if (!zone) warnings.push(`Zone inconnue pour la cle '${zoneKey}' (tracking ${trackBrut}) -> table 'Pays' a completer`);
 
@@ -144,7 +143,7 @@ async function process(files) {
       pays, zone: zone || 'zone inconnue',
       colis: iNbColis >= 0 ? num(r[iNbColis]) : 1,
       poids: poidsGr / 1000,
-      mode: modeBrut,
+      mode,
       postes: { ZonesEloignees: zonesEloignees, Fret: fret },
       horsGo: round2(zonesEloignees + fret),
       avecGo: round2(zonesEloignees + fret + gazoleLigne),
