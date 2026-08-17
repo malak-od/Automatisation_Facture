@@ -22,10 +22,13 @@ Classeur reel (9 feuilles) :
   TCD : tableau croise dynamique (source = Facture Colissimo!A:AD), 1 ligne
     par N colis (tracking), colonnes E-L = les 8 postes ERP (Adresse,
     Assurance, Colis volumineux, Droits et taxes, Fret, plus-value BtoC,
-    Taxe gazole, Zones eloignees). Colonne A "ID Client" : AUCUNE formule ni
-    source automatisable identifiee dans le classeur (valeurs figees,
-    probablement saisies/collees a la main) -- NON reconstruite ici, comme
-    deja decide pour Chronopost (meme cas).
+    Taxe gazole, Zones eloignees). Colonne A "ID Client" : PAS un champ du
+    pivot -- une colonne juxtaposee, valeurs saisies a la main (jointure
+    externe, ex. '6739'/'7027'), PURGEE ici a chaque generation (cf. fonction
+    main(), etape 3) pour que la personne qui la renseigne reparte d'une
+    colonne vide alignee sur le bon mois -- meme regle que "supprimer les Id
+    clients" (Documentation/FACTURATION EXCEL.docx, "Pour tous les
+    transporteurs") et que Chronopost/BLS.
   Bilan Factures / Bilan Client : TCD sources sur Facture Colissimo / TCD.
     "Bilan Factures" = 1 ligne par N facture, col B = Somme de Total HT ;
     reconciliation PDF (video process) : on colle le "TOTAL HT" du PDF en
@@ -161,8 +164,9 @@ def retry(fn, tries=8, delay=0.6):
 
 
 def parse_args(rest):
-    """--presta <csv...> [--douane <csv...>] [--pdf <pdf...>]"""
+    """--presta <csv...> [--douane <csv...>] [--pdf <pdf...>] [--period AAAA_MM]"""
     presta, douane, pdf_paths = [], [], []
+    period = None
     cur = None
     for a in rest:
         if a == "--presta":
@@ -171,18 +175,23 @@ def parse_args(rest):
             cur = "douane"
         elif a == "--pdf":
             cur = "pdf"
+        elif a == "--period":
+            cur = "period"
         elif cur == "presta":
             presta.append(a)
         elif cur == "douane":
             douane.append(a)
         elif cur == "pdf":
             pdf_paths.append(a)
-    return presta, douane, pdf_paths
+        elif cur == "period":
+            period = a
+            cur = None
+    return presta, douane, pdf_paths, period
 
 
 def main():
     modele, sortie = sys.argv[1], sys.argv[2]
-    presta_paths, douane_paths, pdf_paths = parse_args(sys.argv[3:])
+    presta_paths, douane_paths, pdf_paths, period = parse_args(sys.argv[3:])
     shutil.copyfile(modele, sortie)  # on ne touche JAMAIS au modele
 
     hdr, rows, ncol = load_rows(presta_paths, douane_paths)
@@ -233,6 +242,41 @@ def main():
             pass
         xl.Calculate()
 
+        # BUG TROUVE 2026-08-17 (donnees reelles de juillet 2026) : le champ colonne
+        # "Categorie" du TCD a ShowAllItems=False par defaut -- si un mois n'a AUCUNE
+        # ligne dans une categorie (ex. juillet : "Assurance"/"plus-value BtoC" absentes),
+        # Excel fait DISPARAITRE la colonne correspondante au lieu de l'afficher a 0, ce qui
+        # DECALE toutes les colonnes suivantes (H/I deviennent Fret/Taxe gazole au lieu de
+        # Droits et taxes/Fret). Or "Import CSV" reference TCD!H:H, TCD!I:I... par LETTRE DE
+        # COLONNE FIXE (formules copiees du modele de juin, jamais dynamiques) -- un decalage
+        # silencieux fait alors remonter la mauvaise valeur dans la mauvaise colonne (ex.
+        # "Droits et taxes" recevait la valeur de "Fret"/10 au lieu de la sienne). Fixe en
+        # forcant ShowAllItems=True sur le champ "Categorie" : les 8 postes ERP restent
+        # TOUJOURS aux memes colonnes E-L, a 0 si absents du mois, comme dans le fichier de
+        # juillet fait a la main (verifie identique par nom de colonne).
+        #
+        # ATTENTION : ShowAllItems affiche aussi les items OBSOLETES restes dans le cache du
+        # pivot (ex. "Surcharge de securite", present dans le cache du modele de juin mais
+        # absent de la table de correspondance actuelle ET des CSV bruts -- probablement un
+        # residu d'un mois anterieur jamais nettoye). Sans purge, cet item fantome cree une
+        # 9e colonne qui decale "Zones eloignees" de L a M et casse les formules figees
+        # "Total hors Gazole"/"Total + GO" (SUM(E:J,L) / SUM(E:L), ecrites pour 8 colonnes
+        # fixes). Fixe en forcant MissingItemsLimit=0 (xlMissingItemsNone) AVANT le refresh
+        # qui suit ShowAllItems=True, pour que le cache ne retienne QUE les categories
+        # reellement presentes dans les donnees du mois traite (les 8 postes ERP legitimes,
+        # meme a 0, restent tous couverts par la table de correspondance -> jamais de trou).
+        try:
+            tcd_pt = wb.Sheets("TCD").PivotTables(1)
+            tcd_pt.PivotCache().MissingItemsLimit = 0  # xlMissingItemsNone
+            retry(lambda: wb.RefreshAll())
+            for pf in tcd_pt.PivotFields():
+                if pf.Orientation == 2:  # xlColumnField
+                    pf.ShowAllItems = True
+            retry(lambda: wb.RefreshAll())
+            xl.Calculate()
+        except Exception as e:
+            print("Avertissement : ShowAllItems sur le TCD a echoue :", e)
+
         # ---- 3) Import CSV : TOUT en formules (pas de donnees brutes a coller) -- son
         #    nombre de lignes suit le nombre de colis UNIQUES du TCD recalcule (pas n, le
         #    nombre de charges brutes). On ne touche JAMAIS la ligne 2 (modele des formules
@@ -262,6 +306,20 @@ def main():
         imp = wb.Sheets("Import CSV")
         if imp.AutoFilterMode:
             imp.AutoFilterMode = False
+
+        # Colonne B "Date validite tarif" : valeur LITTERALE (pas une formule) sur la ligne
+        # modele (B2), copiee telle quelle par le FillDown() ci-dessous sur toutes les lignes
+        # (B3+ = "=B2" dans le modele). BUG TROUVE 2026-08-17 (juillet 2026) : le modele clone
+        # (juin) laisse B2 a l'ancienne date de juin -> sans correction, TOUT le mois traite
+        # affiche encore le 01/06/2026 en "Date validite tarif", quel que soit le mois reel des
+        # CSV. Le fichier de juillet fait a la main a B2 mis a jour au 01/07/2026 -- reproduit
+        # ici depuis --period (AAAA_MM, deja calcule cote Node depuis la colonne "Date" du CSV).
+        if period:
+            m = re.fullmatch(r"(\d{4})_(\d{2})", period)
+            if m:
+                import datetime
+                retry(lambda: setattr(imp.Cells(2, 2), "Value", datetime.datetime(int(m.group(1)), int(m.group(2)), 1)))
+
         impOldLast = imp.Cells(imp.Rows.Count, 6).End(xlUp).Row  # colonne F = N Tracking
         if impNewLast > impOldLast:
             retry(lambda: imp.Range(imp.Cells(2, 1), imp.Cells(impNewLast, LAST_COL_IMPORT)).FillDown())

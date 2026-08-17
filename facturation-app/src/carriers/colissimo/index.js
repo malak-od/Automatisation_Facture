@@ -278,10 +278,11 @@ module.exports = {
   finalizer: {
     script: '../automatisation/finaliser_colissimo.py',
     template: '../Transporteurs/Colissimo/2026_06_Facture Colissimo.xlsx',
-    buildArgs: (files) => [
+    buildArgs: (files, period) => [
       '--presta', ...(files.presta || []),
       '--douane', ...(files.douane || []),
       '--pdf', ...(files.pdf || []),
+      ...(period ? ['--period', period] : []),
     ],
   },
   process,

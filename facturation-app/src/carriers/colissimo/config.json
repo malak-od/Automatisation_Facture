@@ -1,7 +1,7 @@
 {
   "carrier": "COLISSIMO",
   "_comment_source": "2 fichiers CSV bruts (separateur ';', encodage latin1/cp1252) : 'CSV_Prestations_au_colis.csv' (26 colonnes, N de ligne->Type de charge) et 'CSV_Frais_de_douane.csv' (20 colonnes, structure differente : Droit de douane/TVA importation/Octroi de mer/Frais de gestion/Autres taxes). Colles a la suite dans 'Facture Colissimo' a partir de la colonne H (colonnes A-G calculees). Confirme sur le fichier reel de juin 2026 (11716 lignes prestations + 13 lignes douane) et la transcription video Documentation/Video_Colissimo_1_Preparation_fichier_import.md. Le 3e CSV 'CSV_Indemnisations.csv' n'est JAMAIS utilise (confirme utilisateur 2026-08-14) -- pas de logique dediee a coder.",
-  "_comment_table_correspondance": "Feuille 'Table de correspondance' du classeur modele -- mapping 'Code charge' (colonne AD/26 du CSV Prestations, ou colonne 'Code charge' du CSV Frais de douane) -> poste ERP. 26 codes confirmes exhaustivement sur le fichier reel.",
+  "_comment_table_correspondance": "Feuille 'Table de correspondance' du classeur modele -- mapping 'Code charge' (colonne AD/26 du CSV Prestations, ou colonne 'Code charge' du CSV Frais de douane) -> poste ERP. 26 codes confirmes exhaustivement sur le fichier reel de juin 2026, +3 nouveaux codes confirmes sur le fichier reel de juillet 2026 (CH_P_9H/CH_P_9M/CH_S_RP_RETOURPAYANT, tous 'Frêt' -- la table de correspondance evolue mois apres mois selon les nouveaux tarifs/options Colissimo, a re-diffe si un #N/A apparait sur la colonne 'Categorie' de 'Facture Colissimo' un mois futur).",
   "table_correspondance": {
     "CH_CAP": "Taxe gazole",
     "CH_P_6A": "Frêt",
@@ -28,7 +28,10 @@
     "CH_DOUANE": "Droits et taxes",
     "CH_S_PT_PARTENAIRETRANSPORT": "Frêt",
     "CH_P_CG": "Frêt",
-    "CH_P_7Q": "Frêt"
+    "CH_P_7Q": "Frêt",
+    "CH_P_9H": "Frêt",
+    "CH_P_9M": "Frêt",
+    "CH_S_RP_RETOURPAYANT": "Frêt"
   },
   "_comment_modes_envois": "Feuille 'Modes envois' -- mapping concatenation(prefixe tracking 2 lettres + code pays ISO) -> mode envoi ERP (colonne 'Zone' du modele, ex. 'FR_DOM') + TVA + mode de transport (DOM/DOS/etc). Cle de recherche = LEFT(N colis,2) & XLOOKUP(Pays Destination, Pays!A:A, Pays!B:B) -- confirme formule exacte 'Facture Colissimo'!D2 = E2&F2. 327 entrees extraites du fichier reel de juin 2026.",
   "modes_envois": [
