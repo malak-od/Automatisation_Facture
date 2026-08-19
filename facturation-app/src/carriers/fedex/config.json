@@ -1,0 +1,57 @@
+{
+  "carrier": "FEDEX",
+  "champs_fixes": {
+    "tva_taux": 0.2
+  },
+
+  "_comment_service": "Colonne 'Service Description' (Shipment Detail) -> 'Mode d'envoi' ERP. Formule modele exacte (Shipment Detail!E) : =IF(J=\"FedEx Priority\",\"ST\",\"FICP\") -- confirme sur 3607/3607 lignes reelles de juin 2026 (3594 'FedEx Priority'->ST, 13 autres services->FICP).",
+  "service_st": "FedEx Priority",
+
+  "_comment_transporteur": "Import ERP!A, formule modele exacte : =IF(OR(M=\"FICP\",M=\"IE\",M=\"RE\",M=\"International\",M=\"Europe\"),\"FEDEX INTERNATIONAL\",\"FEDEX FRANCE\") -- confirme par la video (avril 2026, formule lue caractere par caractere).",
+
+  "_comment_tva_eu": "Import ERP!N (TVA), formule modele EXACTE reconfirmee sur le fichier reel de juin 2026 (lignes 2 ET 3, openpyxl data_only=False) : =IF(OR(I=\"FR\";I=\"DE\";...liste UE...);0.2;0) -- teste le PAYS (colonne I, code ISO2 destinataire), PAS le mode FEDEX FRANCE/INTERNATIONAL. Liste UE HARDCODEE (27 pays, sans Royaume-Uni/Suisse/Norvege -- deja hors UE).",
+  "tva_pays_ue": ["FR", "DE", "IT", "ES", "BE", "NL", "LU", "PT", "AT", "IE", "FI", "SE", "DK", "PL", "CZ", "SK", "HU", "RO", "BG", "HR", "SI", "EE", "LV", "LT", "GR", "CY", "MT"],
+
+  "_comment_zoning": "Onglet 'Zoning' du classeur modele (220 lignes, Pays/Code ISO/FICP/IE/RE) -- Import ERP!J (Zone) formule modele : =IF(COUNTIF(Zoning!B:B,I)=0,\"inconnu\",XLOOKUP(I,Zoning!B:B,Zoning!C:C)) -- SEULE la colonne C ('FICP') est utilisee, jamais D('IE')/E('RE') (quasi-vides, 3 valeurs non vides chacune sur 220 lignes) -- valide contre le CSV ERP reel livre (2026_06_Fedex_Import.csv, expedition Finlande -> Zoning FICP='T' -> CSV Zone='T', match exact).",
+
+  "_comment_colis_volumineux": "Import ERP!R, formule modele exacte : =IF(XLOOKUP(tracking,'Shipment Detail'!N:N,'Shipment Detail'!AV:AV)>60,10,\"\") -- AV='Dimmed Length (cm)', forfait fixe 10 EUR si longueur dimensionnee > 60cm.",
+  "colis_volumineux_seuil_cm": 60,
+  "colis_volumineux_montant": 10,
+
+  "_comment_droits_taxes": "Import ERP!O, reference 'Shipment Detail' colonne 'Shipment Duty and Tax Charge Billed Currency' (BM, position variable -- resolue par NOM, jamais par lettre, cf. memoire fedex_colonnes_bk_bo_ecart_tva.md) -- vide si 0.",
+
+  "_comment_montant": "Shipment Detail!A ('Montant', utilise par TCD/Bilan factures/Bilan clients), formule modele exacte : =BK+BN = 'Shipment Freight Charge Billed Currency' (Fret) + 'Shipment Discount Billed Currency' (Remise, deja negative) -- colonnes resolues PAR NOM (position BK/BN a deja bouge dans le passe, cf. memoire).",
+
+  "_comment_exclusion_droits_taxes": "Process manuel documente par l'utilisateur (2026-08-19) : 'Si une facture correspond a Droit & Taxes il faut supprimer les lignes correspondantes dans Shipment Detail' -- une facture 100% Droits&Taxes (Fret=0 sur toutes ses lignes, Duty&Tax>0) est un ajustement douanier, pas un envoi facturable normalement -- exclue de Shipment Detail/TCD/Import ERP, gardee seulement en info de reconciliation.",
+
+  "zoning": {
+    "AD": "S", "AE": "C", "AF": "", "AG": "", "AI": "D", "AL": "W", "AM": "C", "AO": "E",
+    "AR": "D", "AS": "", "AT": "T", "AU": "G", "AW": "D", "AZ": "C", "BA": "W", "BB": "D",
+    "BD": "C", "BE": "R", "BF": "E", "BG": "U", "BH": "C", "BI": "E", "BJ": "E", "BL": "",
+    "BM": "D", "BN": "C", "BO": "D", "BQ": "", "BR": "D", "BS": "D", "BT": "C", "BW": "E",
+    "BY": "", "BZ": "D", "CA": "A", "CD": "E", "CF": "", "CG": "E", "CH": "U", "CI": "",
+    "CK": "E", "CL": "D", "CM": "E", "CN": "F", "CO": "D", "CR": "D", "CV": "E", "CW": "D",
+    "CY": "W", "CZ": "U", "DE": "R", "DJ": "E", "DK": "T", "DM": "D", "DO": "D", "DZ": "C",
+    "EC": "D", "EE": "U", "EG": "C", "ER": "E", "ES": "S", "ET": "E", "FI": "T", "FJ": "E",
+    "FM": "E", "FO": "E", "FR": "France", "GA": "E", "GB": "X", "GD": "D", "GE": "C", "GF": "D",
+    "GH": "E", "GI": "S", "GL": "E", "GM": "E", "GN": "E", "GP": "D", "GQ": "E", "GR": "U",
+    "GT": "D", "GU": "E", "GW": "E", "GY": "D", "HK": "F", "HN": "D", "HR": "U", "HT": "D",
+    "HU": "U", "ID": "B", "IE": "T", "IL": "C", "IN": "C", "IQ": "E", "IR": "", "IS": "W",
+    "IT": "S", "JM": "D", "JO": "C", "JP": "I", "KE": "E", "KG": "E", "KH": "B", "KI": "",
+    "KM": "", "KN": "", "KR": "B", "KW": "C", "KY": "D", "KZ": "E", "LA": "B", "LB": "C",
+    "LC": "D", "LI": "V", "LK": "C", "LR": "E", "LS": "E", "LT": "U", "LU": "R", "LV": "U",
+    "LY": "C", "MA": "C", "MD": "W", "ME": "W", "MG": "E", "MH": "E", "MK": "W", "ML": "E",
+    "MM": "", "MN": "", "MO": "B", "MP": "", "MQ": "D", "MR": "E", "MS": "D", "MT": "W",
+    "MU": "E", "MV": "E", "MW": "E", "MX": "D", "MY": "B", "MZ": "E", "NA": "E", "NC": "E",
+    "NE": "E", "NG": "E", "NI": "D", "NL": "R", "NO": "V", "NP": "C", "NR": "", "NU": "",
+    "NZ": "G", "OM": "C", "PA": "D", "PE": "D", "PF": "E", "PG": "E", "PH": "B", "PK": "C",
+    "PL": "T", "PR": "D", "PS": "C", "PT": "T", "PW": "", "PY": "D", "QA": "C", "RE": "E",
+    "RO": "U", "RS": "W", "RU": "", "RW": "E", "SA": "C", "SB": "", "SC": "E", "SD": "",
+    "SE": "T", "SG": "I", "SI": "U", "SK": "U", "SL": "", "SM": "S", "SN": "E", "SO": "",
+    "SR": "", "SV": "D", "SX": "D", "SY": "", "SZ": "E", "TC": "D", "TD": "E", "TH": "B",
+    "TL": "B", "TM": "", "TN": "C", "TO": "E", "TR": "W", "TT": "D", "TV": "", "TW": "B",
+    "TZ": "E", "UA": "W", "UG": "E", "US": "H", "UY": "D", "UZ": "E", "VA": "S", "VC": "D",
+    "VE": "", "VG": "D", "VI": "D", "VN": "B", "VU": "E", "WF": "E", "WS": "E", "YE": "",
+    "ZA": "D", "ZM": "E", "ZW": "E"
+  }
+}
