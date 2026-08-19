@@ -1,0 +1,31 @@
+{
+  "carrier": "TNT",
+  "champs_fixes": {
+    "Transporteur": "TNT",
+    "E/P": "E",
+    "Pays": "FR",
+    "Zone": "France",
+    "Mode": "ST",
+    "tva": 0.2
+  },
+
+  "_comment_categories": "Feuille 'Categories' du classeur modele (2026_06_Facture TNT.xlsx) -- mapping 'code complement' -> poste ERP. Ligne SANS code complement (vide, ex. lignes 'ENV'/'COL' de base) = 'Fret' par defaut (formule modele : IF(codeComplement=\"\",\"Fret\",XLOOKUP(...))). Dedupliquee (le fichier source a des doublons/espaces de fin variables sur certains codes, sans conflit de valeur).",
+  "categories": {
+    "AS_AD_VAL": "Assurance",
+    "CHN": "Frêt",
+    "CNM": "Colis volumineux",
+    "DR": "Frêt",
+    "FACTOR_FOR": "Frêt",
+    "LE": "Frêt",
+    "LIS": "Frêt",
+    "LS": "Frêt",
+    "MINI_FAC": "Frêt",
+    "PTY": "Frêt",
+    "REC": "Frêt",
+    "RS": "Frêt",
+    "SURCH_CARB": "Gazole",
+    "TMC": "Frêt",
+    "Z": "Frêt",
+    "ZEL": "Zones éloignées"
+  }
+}
