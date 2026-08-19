@@ -25,7 +25,7 @@
 const pdfParse = require('pdf-parse');
 const path = require('path');
 const fs = require('fs');
-const { num, round2 } = require('../../core/csv');
+const { num, round2, roundUp1 } = require('../../core/csv');
 const { validate } = require('../../core/validate');
 const cfg = require('./config.json');
 
@@ -323,7 +323,7 @@ async function process(files) {
       Tracking: rec.dossier, Nom: rec.libelle.replace(/\n/g, ' '),
       EP: cfg.champs_fixes['E/P'], Pays: cfg.champs_fixes.Pays, Zone: cfg.champs_fixes.Zone,
       NbrColis: rec.isNavette ? NBRCOLIS_NAVETTE_DEFAUT : (aff ? Math.round(aff.nbPalettes) : 0),
-      Poids: rec.isNavette ? POIDS_NAVETTE_DEFAUT : (aff ? aff.poids : 0),
+      Poids: rec.isNavette ? POIDS_NAVETTE_DEFAUT : (aff ? roundUp1(aff.poids) : 0),
       Mode: cfg.champs_fixes.Mode, TVA: cfg.champs_fixes.tva,
       DroitsTaxes: 0, Assurance: 0,
       ZonesEloignees: 0, ColisVolumineux: 0, Adresses: 0,
@@ -337,7 +337,7 @@ async function process(files) {
   // Navette : COLIS=0/FRET=0 sont des consequences ATTENDUES de la regle ci-dessus (deja
   // expliquees en infos), pas de vraies anomalies -> exclues de validate() pour ne pas
   // generer 2 alertes de bruit par ligne navette (COLIS=0 + FRET=0).
-  const { alerts, infos: valInfos } = validate(importRows.filter((o) => !o._isNavette), { skipPoidsDecimal: true });
+  const { alerts, infos: valInfos } = validate(importRows.filter((o) => !o._isNavette));
   for (const o of importRows) delete o._isNavette;
   infos.push(...valInfos);
   const nbHorsNavette = importRows.length - nbNavetteExclues;

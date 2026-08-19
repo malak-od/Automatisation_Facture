@@ -16,6 +16,7 @@ const lettres = require('./carriers/lettres');
 const bls = require('./carriers/bls');
 const chronopost = require('./carriers/chronopost');
 const colissimo = require('./carriers/colissimo');
+const tnt = require('./carriers/tnt');
 
 function planned(meta) {
   return {
@@ -37,12 +38,9 @@ const PLANNED = [
     method: "Ouvrir CSV shipment detail, remplacer . par ,, E/P via export brut m/m-1, verifier FICP (IE/RE), MAJ TCD, gerer droits & taxes.",
     inputs: [{ key: 'csv', label: 'Shipment detail (CSV)', accept: '.csv', multiple: true, required: true },
              { key: 'pdf', label: 'Facture PDF', accept: '.pdf', multiple: true, required: false }] },
-  { id: 'tnt', name: 'TNT', taxeGasoil: 'Facture PDF (taux officiel)',
-    method: "Etendre colonnes, ajouter les postes, MAJ TCD, NE PAS convertir les trackings en nombre, verifier tarifs via surcharge carburant PDF.",
-    inputs: [{ key: 'facture', label: 'Facture TNT', accept: '.xlsx,.csv', multiple: false, required: true }] },
 ];
 
-const carriers = [kuehne, delivengo, dpd, gls, geodis, mondialRelay, lettres, bls, chronopost, colissimo, ...PLANNED.map(planned)];
+const carriers = [kuehne, delivengo, dpd, gls, geodis, mondialRelay, lettres, bls, chronopost, colissimo, tnt, ...PLANNED.map(planned)];
 const byId = Object.fromEntries(carriers.map((c) => [c.id, c]));
 
 /** Metadonnees publiques (pour l'UI), sans exposer process(). */

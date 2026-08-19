@@ -261,6 +261,20 @@ def main():
     i_pays_arrivee = col_index(header, "Pays arrivee")
     i_pays_depart = col_index(header, "Pays depart")
 
+    # "Sous-compte" est du TEXTE dans le brut recu ('0'/'1'/'2', pas 0/1/2) -- BUG TROUVE
+    # 2026-08-14 : la formule W ("Code produit modifie") compare C<>2 (nombre), qui est
+    # TOUJOURS VRAI face a du texte en Excel (PAS de coercion implicite dans les
+    # comparaisons =/<> d'un IF, contrairement a une addition/soustraction) -- resultat, les
+    # 1383 lignes 2SHOP (sous-compte='2', produit 6C/5Y) de juin 2026 tombaient TOUTES dans
+    # le cas vide au lieu de devenir 6CK/5YK. Converti en nombre ICI (a la source, avant
+    # collage dans "Facture Chronopost") plutot que de reecrire la formule en comparaison
+    # texte -- decision utilisateur 2026-08-14 (corriger le type de donnee, pas la formule).
+    if i_sous_compte is not None:
+        for r in all_rows:
+            v = r[i_sous_compte]
+            if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+                r[i_sous_compte] = int(v.strip())
+
     # TRI DES LIGNES (2026-08-13, decision utilisateur revisee) : "Facture Chronopost" triee
     # STRICTEMENT A -> Z par "Numero LT" (colonne L), y compris les lignes forfaitaires
     # CAP*/ECO*/SUR* -- elles se retrouvent donc melangees aux vraies lignes de colis (leurs
@@ -336,7 +350,21 @@ def main():
         # colonne B, donc "oldLast" (End(xlUp) sur B) ne les detecte pas si le nouveau mois a
         # moins de lignes de donnees que l'ancien, ce qui laisserait un residu de liste au
         # milieu des donnees.
-        retry(lambda: ws.Range(ws.Cells(2, 1), ws.Cells(maxLast + 15, LAST_CALC_COL)).ClearContents())
+        #
+        # BUG TROUVE 2026-08-14 : la marge "+15" partait de maxLast = max(oldLast, newLast),
+        # donc si newLast (nouveau mois) > oldLast (taille du modele au moment de la marge
+        # d'origine), la marge ne couvrait plus la VRAIE position de cette liste -- laissee
+        # residuelle bien AU-DELA de la plage purgee (constate : liste a la ligne 3717+ alors
+        # que maxLast+15 s'arretait avant). Consequence concrete : le PivotCache "TCD" (colField
+        # "Categories") scannait cette liste-legende comme si c'etaient de vraies lignes,
+        # ajoutant "Assurance"/"Frais facturation" comme items meme sans aucune vraie donnee
+        # -- OU, pire, les FAISANT DISPARAITRE du TCD si la plage de redirection PivotCache
+        # (calculee sur newLast, PAS oldLast+marge) s'arretait avant cette liste desormais mal
+        # placee, alors qu'elles existaient reellement mais ailleurs dans les vraies donnees.
+        # Fix : purge sur une marge FIXE et large (200 lignes) au-dela du max des 2 tailles,
+        # jamais relative a une seule des deux.
+        purgeUntil = maxLast + 200
+        retry(lambda: ws.Range(ws.Cells(2, 1), ws.Cells(purgeUntil, LAST_CALC_COL)).ClearContents())
         # "No Facture" (et "Numero LT") sont du TEXTE dans le modele ET dans le brut recu
         # ("13655988", pas 13655988) -- ecrire via COM .Value sur une plage dont le format de
         # cellule n'est pas force en Texte laisse Excel AUTO-CONVERTIR certaines valeurs en
@@ -417,7 +445,28 @@ def main():
         # plusieurs centaines d'euros sur la colonne AB par rapport A CE FICHIER REEL
         # SPECIFIQUE -- CE N'EST PAS UN BUG : c'est le fichier reel qui a l'erreur de calage,
         # notre AG2 est correct par construction (SUMIF, insensible au tri/position).
-        ws.Cells(2, 33).Formula = f'=SUMIF({col_n}:{col_n},"Transport",{col_t}:{col_t})'  # AG2 Frêt
+        # AG2 (Frêt) : SUMIF sur PLUSIEURS libelles "Type prestation" (pas seulement
+        # "Transport") -- liste confirmee par capture ecran du filtre AutoFilter reel du
+        # classeur (2026-08-14, cases cochees/decochees) : toutes les lignes cochees entrent
+        # dans le Frêt, INDEPENDAMMENT de leur classement dans la table "Categories" (qui sert
+        # au TCD/reclassement final ERP, un usage different -- ex. "Supplement Corse 18h" est
+        # classe poste "Corse" dans Categories mais reste inclus dans AG2 ici). Cases
+        # DECOCHEES sur la capture (donc PAS dans AG2) : "Participation Eco-Responsable"
+        # (deja AG3), "Sûreté colis" (deja AG4), "Surcharge Carburant Aérien"/"Routier" (deja
+        # AG5) -- coherent, chacune deja comptee ailleurs dans la zone recap.
+        FRET_TYPES_PRESTATION = [
+            "Transport", "Correction d'adresse", "Supp Retour Expediteur Europe",
+            "Supp Retour Expediteur Inter", "Supp Zone Internationale Eloignee",
+            "Supplement Annonce incomplète", "Supplement Corse 18h",
+            "Supplement domicile prive", "Supplement Douane Zone C4",
+            "Supplement Etiquette Non Conforme", "Supplement Forfait Expedition",
+            "Supplement GT", "Supplement Manutention", "Supplement Retour Expediteur",
+            "Supplement Retrait Bureau", "Traitement SAV complémentaire",
+            "Zones Difficiles d'accès",
+        ]
+        ws.Cells(2, 33).Formula = "=" + "+".join(
+            f'SUMIF({col_n}:{col_n},"{t}",{col_t}:{col_t})' for t in FRET_TYPES_PRESTATION
+        )  # AG2 Frêt
         ws.Cells(3, 33).Formula = f'=SUMIF({col_n}:{col_n},"Participation Eco-Responsable",{col_t}:{col_t})'  # AG3 eco
         ws.Cells(4, 33).Formula = f'=SUMIF({col_n}:{col_n},"Sûreté colis",{col_t}:{col_t})'  # AG4 sûreté
         ws.Cells(5, 33).Formula = (
@@ -437,31 +486,65 @@ def main():
         # AutoFilterMode=False (necessaire pour ClearContents/Value=, mais jamais restaure).
         ws.Range(ws.Cells(1, 1), ws.Cells(newLast, LAST_CALC_COL)).AutoFilter()
 
-        # 2) "TCD poids"/"Contrôle pdf" : PivotCache redirige vers TOUTE la largeur utile de
-        #    "Facture Chronopost" (B->AF), PAS la plage figee/etroite du modele (cf. docstring
-        #    de redirect_pivot_caches -- meme piege que DPD/Geodis/Mondial Relay). Ces 2 TCD
-        #    fonctionnent correctement avec cette redirection (donnees + reconciliation PDF
-        #    verifiees exactes).
+        # 2) "TCD poids"/"Contrôle pdf"/"TCD" : PivotCache redirige vers TOUTE la largeur utile
+        #    de "Facture Chronopost" (B->AF), PAS la plage figee/etroite du modele (cf.
+        #    docstring de redirect_pivot_caches -- meme piege que DPD/Geodis/Mondial Relay).
         #
-        #    "TCD" est VOLONTAIREMENT EXCLU de cette redirection (limite connue, acceptee par
-        #    l'utilisateur 2026-08-12) : la redirection vers la plage large produit des
-        #    #VALUE! dans tout le TCD (constate en test), alors que les colonnes source
-        #    ('Facture Chronopost') sont elles-memes correctes -- signe d'un TCD dont la
-        #    configuration RowField/ColField/DataField (4 niveaux : Numero LT>Produit>TVA>Zone
-        #    Tarifaire en lignes, Categories en colonnes) est FRAGILE a un changement de
-        #    largeur de plage, meme piege deja documente pour le TCD imbrique 'Bilan clients'
-        #    de Mondial Relay. Le TCD 'TCD' reste donc sur sa plage figee d'origine du modele
-        #    (affiche des valeurs OBSOLETES du mois modele, PAS le mois traite) -- accepte
-        #    car aucun controle utilise ce TCD precisement (reconciliation PDF passe par
-        #    'Contrôle pdf', poids par 'TCD poids', tous deux fonctionnels).
-        redirect_pivot_caches(wb, ws, ["TCD poids", "Contrôle pdf"], "Facture Chronopost",
-                               max(newLast, 2), FIRST_RAW_COL, LAST_CALC_COL)
+        #    "TCD" etait EXCLU de cette redirection jusqu'au 2026-08-14 (limite documentee
+        #    2026-08-12 : #VALUE! partout en test a l'epoque) -- RE-TESTE le 2026-08-14 (a la
+        #    demande utilisateur, pour changer son 2e RowField 'Produit'->'Code produit
+        #    modifie') : la redirection fonctionne desormais SANS #VALUE! (cause de l'ancien
+        #    echec non identifiee avec certitude -- possible etat different du classeur a
+        #    l'epoque -- mais confirme reproductible sur plusieurs essais). Reintegre a la
+        #    redirection standard.
+        #
+        #    BUG TROUVE 2026-08-14 : la plage redirigee s'arretait a newLast, EXCLUANT la
+        #    liste des 9 postes ERP ecrite juste apres (newLast+3..newLast+11, cf. plus haut)
+        #    -- consequence, le PivotCache "TCD" (colField "Catégories") ne connaissait QUE
+        #    les categories reellement presentes ce mois-ci (souvent 5 a 7 sur 9), les autres
+        #    n'apparaissant PAS du tout dans le tableau (contrairement au fichier fait-main de
+        #    reference, ou les 9 colonnes sont TOUJOURS affichees, a 0 si aucune donnee).
+        #    Fix : la plage redirigee inclut desormais cette liste (jusqu'a newLast+11) --
+        #    chaque ligne de la liste n'a NI "No Facture" NI "Numero LT" renseignes, donc reste
+        #    invisible pour toute la logique metier en aval (Fichier import, reconciliation
+        #    PDF, zone recap AG2:AG5 -- toutes filtrent explicitement sur ces champs ou sur
+        #    "Type prestation"='Transport', jamais rempli sur ces lignes-legende).
+        redirect_pivot_caches(wb, ws, ["TCD poids", "Contrôle pdf", "TCD"], "Facture Chronopost",
+                               max(newLast + 11, 2), FIRST_RAW_COL, LAST_CALC_COL)
         wb.RefreshAll()
         try:
             xl.CalculateUntilAsyncQueriesDone()
         except Exception:
             pass
         xl.Calculate()
+
+        # "TCD" 2e RowField : 'Produit' -> 'Code produit modifie' (demande utilisateur
+        # 2026-08-14, cf. capture ecran du TCD reel montrant deja cette colonne en usage).
+        # Necessite que la redirection ci-dessus ait deja rendu 'Code produit modifie'
+        # disponible dans PivotFields() (absent de la plage figee d'origine du modele).
+        xlHidden, xlRowField = 0, 1
+        wsTcd = wb.Sheets("TCD")
+        ptTcd = wsTcd.PivotTables(1)
+        try:
+            ptTcd.PivotFields("Produit").Orientation = xlHidden
+            codeProduitField = ptTcd.PivotFields("Code produit modifié")
+            codeProduitField.Orientation = xlRowField
+            codeProduitField.Position = 2
+            # Desactive les sous-totaux automatiques Excel sur ce champ ("Total 5YK"/"Total
+            # 3Z"...) -- sans ca, le pivot intercale 1 ligne de sous-total par groupe et
+            # double quasiment le nombre de lignes affichees (3525->7047 lignes constate en
+            # test), alors que 'Produit' (champ precedent) n'avait pas ce comportement visible
+            # (decision utilisateur 2026-08-14 : revenir a un tableau simple ligne par ligne).
+            codeProduitField.Subtotals = tuple([False] * 12)
+            wb.RefreshAll()
+            try:
+                xl.CalculateUntilAsyncQueriesDone()
+            except Exception:
+                pass
+            xl.Calculate()
+            print("'TCD' : 2e RowField changé de 'Produit' vers 'Code produit modifié'.")
+        except Exception as e:
+            print(f"AVERTISSEMENT: impossible de changer le RowField 'TCD' vers 'Code produit modifié' ({e}) -- reste sur 'Produit'.")
 
         # "TCD poids" colonne C "Poids arrondi" (=ROUNDUP(B{row},1)) : BUG TROUVE 2026-08-13
         # (capture ecran utilisateur) -- cette formule manuelle juxtaposee au TCD natif
@@ -512,295 +595,74 @@ def main():
                       .__setattr__("Formula", [[t.format(row=r)] for r in range(3, lastTcd + 1)]))
             print(f"'TCD' : colonnes A/B/C/S/T/U/V/W etirees jusqu'a la ligne {lastTcd}.")
 
-        # 3) "Fichier import" : le carrier Node a DEJA reclasse/calcule les lignes (postes ERP,
-        #    gazole reparti, mapping mode envoi/zone) -- valide sur les 7 PDF de juin 2026 a
-        #    0,00€ d'ecart. On lit son resultat depuis un fichier CSV intermediaire (colle par
-        #    server.js AVANT d'appeler ce finaliseur -- cf. buildArgs) : NON, en realite ce
-        #    script est appele avec les fichiers BRUTS, pas les resultats deja calcules --
-        #    on reproduit ICI la meme logique de reclassement en Python (dupliquee depuis
-        #    src/carriers/chronopost/index.js, a garder synchronisee) pour ecrire "Fichier
-        #    import" en VALEURS (comme "Import CSV" de BLS), la Date Validite en premiere
-        #    colonne mise a jour dynamiquement (meme piege que DPD/Mondial Relay/BLS).
+        # 3) "Fichier import" : formules FIXES du modele fait-main, referencant TCD/TCD poids
+        #    PAR POSITION (ligne n de "Fichier import" -> ligne n+1 de "TCD", decalage
+        #    constant du a l'entete sur 2 lignes du TCD natif) -- decision utilisateur
+        #    2026-08-14 : garder la feuille EXCEL "vivante" (recalcul automatique si le TCD
+        #    change, ex. apres saisie manuelle des ID clients), reserver l'ecriture en VALEURS
+        #    PURES au CSV livre au client (deja fait cote Node.js, writeImportCsv/excelOut.js,
+        #    non touche ici). Formules reprises A L'IDENTIQUE du modele, y compris 2 points
+        #    DELIBEREMENT NON corriges malgre un ecart connu avec notre logique Python deja
+        #    validee a 0,00€ (choix utilisateur explicite, prevaut sur la logique validee) :
+        #      - H (E/P) = IF(RIGHT(J,3)="BTB","E","P") -- le modele utilise le suffixe de
+        #        Zone, PAS le mode envoi='1S' confirme par le pole transport (cf. epPourMode
+        #        cote index.js/finaliseur precedent, source de 64 avaries evitees en juillet
+        #        2026 en corrigeant precisement ce point pour le CSV/carrier Node -- cette
+        #        feuille Excel EN REVANCHE reste fidele au modele, sur demande explicite).
+        #      - T (Frêt) = TCD!Y{row} -- la colonne Y du TCD actuel n'a AUCUN en-tete (la
+        #        vraie donnee "Frêt + CAP + ECO... hors gazole" est en colonne W) -- reference
+        #        cassee/obsolete du modele, reproduite TELLE QUELLE (pas corrigee vers W) sur
+        #        demande utilisateur explicite -- "Frêt" restera donc vide sur cette feuille
+        #        tant que cette reference n'est pas corrigee manuellement dans le modele.
+        #    Le TCD ne regroupe pas non plus les lignes multiples par tracking (contrairement
+        #    au carrier Node/CSV final) -- une meme consequence du choix "formules du modele
+        #    sans exception" : le nombre de lignes de "Fichier import" suit celui du TCD natif
+        #    (une ligne par ligne source de "Facture Chronopost", PAS par tracking unique).
         wsImp = wb.Sheets("Fichier import")
         if wsImp.AutoFilterMode:  # meme piege que "Facture Chronopost" ci-dessus
             wsImp.AutoFilterMode = False
         oldLastImp = wsImp.Cells(wsImp.Rows.Count, 6).End(xlUp).Row
-        LAST_COL_IMPORT = 23
+        LAST_COL_IMPORT = 21  # A->U (21 colonnes du modele -- V/W = gazole/note 2SHOP, jamais remplies)
 
-        import json
-        biblio_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "facturation-app", "src", "carriers", "chronopost", "config.json")
-        with open(biblio_path, encoding="utf-8") as f:
-            cfg = json.load(f)
-
-        def is_forfaitaire(numero_lt):
-            s = str(numero_lt or "").strip().upper()
-            return bool(re.match(r"^(CAP|ECO|SUR)", s))
-
-        def type_forfaitaire(numero_lt):
-            s = str(numero_lt or "").strip().upper()
-            if s.startswith("CAP"):
-                return "CAP"
-            if s.startswith("ECO"):
-                return "ECO"
-            if s.startswith("SUR"):
-                return "SUR"
-            return None
-
-        i_type_prestation = col_index(header, "Type prestation")
-        i_tva_col = col_index(header, "TVA")
-        i_zone_tarifaire = col_index(header, "Zone Tarifaire")
-        i_poids = col_index(header, "Poids")
-        i_montant_ht = col_index(header, "Montant HT")
-
-        lignes_normales, lignes_forfaitaires = [], []
-        lignes_forfaitaires_import = []  # TOUTES (CAP+ECO+SUR), pour l'onglet "Fichier import"
-        for r in all_rows:
-            facture = str(r[i_facture] or "").strip()
-            numero_lt = str(r[i_numero_lt] or "").strip()
-            montant_ht = to_num(r[i_montant_ht])
-            if not facture or not numero_lt:
-                continue
-            if is_forfaitaire(numero_lt):
-                if type_forfaitaire(numero_lt) == "CAP":
-                    lignes_forfaitaires.append({"facture": facture, "montant_ht": montant_ht})
-                lignes_forfaitaires_import.append({"numero_lt": numero_lt, "montant_ht": montant_ht})
-                continue
-            lignes_normales.append({
-                "facture": facture, "sous_compte": str(r[i_sous_compte] or "").strip(),
-                "numero_lt": numero_lt,
-                "type_prestation": str(r[i_type_prestation] or "").strip() if i_type_prestation is not None else "",
-                "zone_tarifaire": str(r[i_zone_tarifaire] or "").strip() if i_zone_tarifaire is not None else "",
-                "poids": to_num(r[i_poids]) if i_poids is not None else 0,
-                "produit": str(r[i_produit] or "").strip() if i_produit is not None else "",
-                "montant_ht": montant_ht,
-                "pays_depart": str(r[i_pays_depart] or "").strip() if i_pays_depart is not None else "",
-                "pays_arrivee": str(r[i_pays_arrivee] or "").strip() if i_pays_arrivee is not None else "",
-            })
-
-        pool_gazole = {}
-        for l in lignes_forfaitaires:
-            pool_gazole[l["facture"]] = pool_gazole.get(l["facture"], 0.0) + l["montant_ht"]
-        total_fret = {}
-        for l in lignes_normales:
-            total_fret[l["facture"]] = total_fret.get(l["facture"], 0.0) + l["montant_ht"]
-
-        POSTE_KEYS = ["Adresse", "Assurance", "Colis volumineux", "Corse", "Droits et taxes", "Frais facturation", "Frêt", "Gazole", "Zones éloignées"]
-
-        def mapping_erp(produit, zone_tarifaire, pays_arrivee, pays_depart):
-            entry = cfg["bibliotheque"].get(produit)
-            if not entry:
-                return {"modeEnvoi": "inconnu", "zone": "inconnu", "transporteur": "inconnu"}
-            zone = entry["zone"]
-            if produit == "6B":
-                z = cfg["zoning_2shop"].get(pays_arrivee.upper())
-                zone = str(z) if z is not None else "inconnu"
-            elif produit == "6C":
-                z = cfg["zoning_2shop_6c"].get(pays_depart.upper())
-                zone = str(z) if z is not None else "inconnu"
-            elif produit in ("17", "44"):
-                zone = f"{produit}_{zone_tarifaire}"
-            return {"modeEnvoi": entry["modeEnvoi"], "zone": zone, "transporteur": entry["transporteur"]}
-
-        def ep_pour_mode(mode):
-            # SEUL le mode envoi '1S' a une grille tarifaire Entreprise -- corrige par le pole
-            # transport (2026-08-12) apres 64 avaries en juillet 2026 (E fixe errone avant).
-            return "E" if str(mode or "").strip() == "1S" else "P"
-
-        def forfait_zones_eloignees(montant_brut):
-            # "Zones eloignees" export = forfait binaire (Corse + Zones eloignees brutes
-            # fusionnees), PAS le montant brut -- verifie empiriquement contre le fichier
-            # fait a la main de juillet 2026 (2026-08-12).
-            if montant_brut <= 0:
-                return None
-            return 29 if montant_brut > 15 else 9.5
-
-        def forfait_adresses(montant_brut):
-            if montant_brut <= 0:
-                return None
-            return 17 if montant_brut > 8.5 else 8.5
-
-        def round_up_1(x):
-            # Poids arrondi au dixieme de kg SUPERIEUR (meme convention que les autres
-            # transporteurs du projet -- roundUp1 cote Node) -- confirme empiriquement
-            # (2026-08-13) contre le CSV fait a la main de juillet 2026 : match exact sur
-            # 3917/3917 trackings (poids brut Chronopost a 3 decimales, ex. 4,638kg -> 4,7kg).
-            import math
-            return math.ceil(x * 10 - 1e-9) / 10
-
-        produits_hors_contrat = set(cfg.get("produits_hors_contrat", []))
-        n_hors_contrat = 0
-        n_produit_inconnu = 0
-
-        # Calcul par ligne brute (comme avant), PUIS regroupement par tracking (Numero LT)
-        # avant d'ecrire import_data -- cf. meme fix cote Node (chronopost/index.js) : un
-        # meme tracking a souvent plusieurs lignes dans le brut (1 "Transport" + N
-        # "supplements", ex. "Zones Difficiles d'acces", poids=0 car pas un colis separe).
-        # Le fichier fait a la main n'a QU'UNE SEULE ligne par tracking (confirme : 3917
-        # trackings uniques = 3917 lignes du CSV reel de juillet 2026). BUG TROUVE 2026-08-13
-        # (7e bug) : avant ce fix, chaque ligne du brut devenait une ligne d'import separee
-        # (fausses alertes POIDS=0 + double comptage NbrColis potentiel cote ERP).
-        lignes_calculees = []  # { numero_lt, m, postes, poids, produit }
-        lignes_produit_inconnu_import = []  # {numero_lt, montant_ht}, pour l'onglet "Fichier import"
-        for l in lignes_normales:
-            categorie = cfg["categories"].get(l["type_prestation"])
-            tf = total_fret.get(l["facture"], 0.0)
-            pg = pool_gazole.get(l["facture"], 0.0)
-            gazole_ligne = (pg / tf) * l["montant_ht"] if tf > 0 else 0.0
-
-            m = mapping_erp(l["produit"], l["zone_tarifaire"], l["pays_arrivee"], l["pays_depart"])
-            if m["modeEnvoi"] == "inconnu":
-                # Produit Chrono non reconnu dans "Bibliotheque transporteurs" (ex. produit "0"
-                # vu en juillet 2026, EXP20260727-2876730, 11 trackings) -- Transporteur/mode
-                # envoi/Zone tous "inconnu", inexploitable pour l'ERP. Confirme empiriquement
-                # (2026-08-12) face a la reference faite a la main de juillet 2026 (3917 lignes
-                # exactement, notre sortie en avait 3928 -- l'ecart = ces 11 trackings). Meme
-                # traitement que les lignes forfaitaires CAP/ECO/SUR : exclues du CSV livre au
-                # client (Node/importRows), mais RESTENT dans l'onglet Excel "Fichier import"
-                # du classeur (decision utilisateur 2026-08-13, capture ecran du fichier fait a
-                # la main -- confirme que ces lignes 'inconnu' sont visibles dans le classeur,
-                # seul le CSV final les retire, cf. transcription video Partie 11 vs 13).
-                n_produit_inconnu += 1
-                lignes_produit_inconnu_import.append({"numero_lt": l["numero_lt"], "montant_ht": l["montant_ht"]})
-                continue
-
-            # "sureté + eco" (colonne AA du modele) : forfait FIXE ajoute a TOUTE ligne normale
-            # -- 0,08€ pour les modes 2SHOP (6B/6C/5X/5Y), 0,5€ sinon. Formule modele EXACTE :
-            # AA=IF(mode∈{6C,6B,5X,5Y},0.08,0.5), AC(hors gazole)=Z+AA -- s'ajoute au Frêt de
-            # CHAQUE ligne du CLASSEUR (fidele au modele Excel). BUG TROUVE 2026-08-12 (5e bug) :
-            # ce forfait n'etait pas applique du tout, cause principale de l'ecart residuel de
-            # ~1040€ sur juillet 2026.
-            surete_eco_ligne = 0.08 if m["modeEnvoi"] in ("6B", "6C", "5X", "5Y") else 0.5
-
-            postes = {k: 0.0 for k in POSTE_KEYS}
-            if categorie in POSTE_KEYS:
-                postes[categorie] = round(postes[categorie] + l["montant_ht"], 2)
-            # "Frais facturation" fusionne dans "Frêt" (pas de colonne ERP dediee, meme trou
-            # que "Corse" -- decision utilisateur 2026-08-12, precaution sans donnee reelle).
-            if postes["Frais facturation"] > 0:
-                postes["Frêt"] = round(postes["Frêt"] + postes["Frais facturation"], 2)
-                postes["Frais facturation"] = 0.0
-            postes["Frêt"] = round(postes["Frêt"] + surete_eco_ligne, 2)
-            postes["Gazole"] = round(postes["Gazole"] + gazole_ligne, 2)
-
-            if l["produit"] in produits_hors_contrat:
-                n_hors_contrat += 1
-
-            # "Pays arrivee" brut VIDE = envoi NATIONAL (Chronopost ne renseigne ce champ que
-            # pour l'international, confirme sur ~2440 lignes/4148 de juillet 2026) -- PAS une
-            # donnee manquante, meme principe que pays_tva du modele ("vide/non liste = 20%
-            # par defaut"). Defaut "FR" applique ICI pour l'export (Pays/TVA), PAS sur
-            # l["pays_arrivee"] passe a mapping_erp() plus haut (reste tel quel pour le
-            # lookup zoning_2shop 6B/6C, qui n'a de toute facon aucune cle "FR").
-            pays_arrivee_export = l["pays_arrivee"] or "FR"
-            tva = cfg["pays_tva"].get(pays_arrivee_export.upper(), 0.2)
-
-            lignes_calculees.append({
-                "numero_lt": l["numero_lt"], "transporteur": m["transporteur"],
-                "mode": m["modeEnvoi"], "zone": m["zone"], "pays": pays_arrivee_export,
-                "tva": tva, "poids": l["poids"], "postes": postes,
-            })
-
-        # Regroupement par tracking : Poids/Zone/Mode/Transporteur/Pays/TVA pris sur la
-        # premiere ligne avec poids>0 (la ligne "Transport"), postes CUMULES sur le groupe.
-        groupes = {}
-        ordre = []
-        for lc in lignes_calculees:
-            if lc["numero_lt"] not in groupes:
-                groupes[lc["numero_lt"]] = []
-                ordre.append(lc["numero_lt"])
-            groupes[lc["numero_lt"]].append(lc)
-
-        import_data = []
-        for numero_lt in ordre:
-            groupe = groupes[numero_lt]
-            base = next((g for g in groupe if g["poids"] > 0), groupe[0])
-            # Poids = SOMME de toutes les lignes du groupe (pas juste celui de "base") --
-            # reproduit exactement le mecanisme du TCD Excel reel ("TCD poids", dataField=
-            # Somme de Poids, verifie dans la video process 2026-08-13) : le TCD ne suppose
-            # JAMAIS que les lignes supplement ont poids=0, il somme mecaniquement. Le
-            # "base['poids']" seul donnait le meme resultat SEULEMENT parce que les lignes
-            # supplement observees ont toujours eu poids=0 (verifie sur 3917 trackings de
-            # juillet 2026, aucune exception) -- mais c'etait une supposition fragile, pas une
-            # garantie structurelle (meme fix que cote Node). PAS de round(x,2) ici :
-            # round_up_1 a besoin de la precision brute (poids Chronopost a 3 decimales) pour
-            # arrondir correctement au dixieme superieur -- round(4.403,2)=4.4 puis
-            # round_up_1(4.4)=4.4 est FAUX vs round_up_1(4.403)=4.5 direct.
-            poids_somme = sum(g["poids"] for g in groupe)
-            postes = {k: round(sum(g["postes"][k] for g in groupe), 2) for k in POSTE_KEYS}
-            # Le forfait sureté+eco est ajoute A CHAQUE LIGNE BRUTE ci-dessus (fidele au
-            # classeur/modele Excel), mais au niveau TRACKING il ne doit s'appliquer qu'UNE
-            # SEULE FOIS -- sinon un tracking a N lignes se voit facturer N x le forfait.
-            # Retire les (N-1) forfaits en trop du Frêt cumule (meme fix que cote Node).
-            surete_eco_forfait = 0.08 if base["mode"] in ("6B", "6C", "5X", "5Y") else 0.5
-            postes["Frêt"] = round(postes["Frêt"] - surete_eco_forfait * (len(groupe) - 1), 2)
-
-            # Le gazole (pool CAP* reparti au prorata) N'EST PAS repercute au client dans le
-            # fichier livre -- confirme empiriquement (2026-08-12) : la colonne "gazole" du
-            # CSV reel de juillet 2026 est VIDE sur les 3917 lignes, et "Frêt" reel = notre
-            # Frêt SANS le gazole (matches exacts). postes["Gazole"] reste calcule (utilise
-            # ailleurs pour la reconciliation PDF sur le total BRUT) mais n'est jamais ecrit
-            # dans le fichier d'import.
-            import_data.append([
-                base["transporteur"], date_validite_serial, "", "", "",
-                numero_lt, "", ep_pour_mode(base["mode"]), base["pays"], base["zone"],
-                1, round_up_1(poids_somme), base["mode"], base["tva"],
-                postes["Droits et taxes"] or None, postes["Assurance"] or None,
-                forfait_zones_eloignees(postes["Zones éloignées"] + postes["Corse"]),
-                postes["Colis volumineux"] or None,
-                forfait_adresses(postes["Adresse"]), postes["Frêt"] or None, None,
-                None, None,
-            ])
-
-        # Lignes forfaitaires (CAP/ECO/SUR) + produit-inconnu : RESTENT dans l'onglet Excel
-        # "Fichier import" du classeur (contrairement au CSV livre au client/Node, qui les
-        # exclut) -- decision utilisateur 2026-08-13, capture ecran du fichier fait a la main
-        # confirmant leur presence avec Transporteur/mode envoi/Zone "inconnu" et TVA vide
-        # (le modele reel produit "#N/A" par formule LOOKUP, notre script ecrit des VALEURS
-        # donc TVA reste simplement vide plutot que de forcer une erreur Excel litterale, cf.
-        # transcription video Partie 11 vs Partie 13 : presentes dans l'onglet classeur,
-        # supprimees seulement a l'etape CSV final). REGROUPEES PAR Numero LT (ex. les 8
-        # lignes brutes "CAPN2" -> 1 SEULE ligne "CAPN2" avec le montant SOMME) -- meme
-        # mecanisme que le TCD natif du fichier reel (confirme capture ecran 2026-08-13 :
-        # le TCD n'a qu'UNE ligne par code forfaitaire, montant cumule -- BUG TROUVE : la
-        # version precedente ecrivait une ligne PAR LIGNE BRUTE, dupliquant "CAPN2"/"ECORN"/
-        # "SURTN" 8 fois chacun au lieu de les sommer, contrairement au TCD reel). Frêt =
-        # montant brut cumule, tel quel (pas de forfait sureté/eco ni de reclassement, ligne
-        # non exploitable pour l'ERP).
-        montants_par_lt = {}
-        ordre_lt = []
-        for lf in lignes_forfaitaires_import + lignes_produit_inconnu_import:
-            if lf["numero_lt"] not in montants_par_lt:
-                montants_par_lt[lf["numero_lt"]] = 0.0
-                ordre_lt.append(lf["numero_lt"])
-            montants_par_lt[lf["numero_lt"]] += lf["montant_ht"]
-        for numero_lt_inconnu in ordre_lt:
-            import_data.append([
-                "inconnu", date_validite_serial, "", "", "",
-                numero_lt_inconnu, "", "P", "inconnu", "inconnu",
-                1, None, "inconnu", None,
-                None, None, None, None, None,
-                round(montants_par_lt[numero_lt_inconnu], 2) or None, None, None, None,
-            ])
-
-        # Fichier import trie par "N° Tracking" (Numero LT, colonne F / index 5) A -> Z
-        # (decision utilisateur 2026-08-13, meme fix cote Node).
-        import_data.sort(key=lambda row: row[5])
-
-        if n_hors_contrat:
-            print(f"AVERTISSEMENT: {n_hors_contrat} ligne(s) avec produit Chrono HORS CONTRAT "
-                  f"({', '.join(sorted(produits_hors_contrat))}) — probable erreur de facturation Chronopost à réclamer.")
-        if n_produit_inconnu:
-            print(f"AVERTISSEMENT: {n_produit_inconnu} ligne(s) avec produit Chrono absent de "
-                  f"'Bibliothèque transporteurs' (mode envoi/zone 'inconnu') — exclue(s) de l'import.")
-
-        newLastImp = 1 + len(import_data)
-        if import_data:
-            retry(lambda: wsImp.Range(wsImp.Cells(2, 1), wsImp.Cells(newLastImp, LAST_COL_IMPORT)).__setattr__("Value", import_data))
+        newLastImp = max(lastTcd - 1, 2)  # ligne n (import) <-> ligne n+1 (TCD) ; TCD data commence ligne 3
+        formulas_import = {
+            1: "=TCD!V{tcdrow}",  # A Transporteur
+            6: "=TCD!E{tcdrow}",  # F N° Tracking
+            8: '=IF(RIGHT(J{row},3)="BTB","E","P")',  # H E/P (fidele au modele, cf. docstring)
+            9: "=LOOKUP(F{row},'Facture Chronopost'!L:L,'Facture Chronopost'!H:H)",  # I Pays
+            10: "=TCD!U{tcdrow}",  # J Zone
+            12: "=_xlfn.XLOOKUP(F{row},'TCD poids'!A:A,'TCD poids'!C:C)",  # L Poids
+            13: "=TCD!T{tcdrow}",  # M mode envoi
+            14: "=IF(I{row}=\"\",0.2,LOOKUP(I{row},'Pays TVA'!A:A,'Pays TVA'!B:B))",  # N TVA
+            15: '=IF(TCD!M{tcdrow}="","",TCD!M{tcdrow})',  # O Droits et taxes
+            16: '=IF(TCD!J{tcdrow}="","",TCD!J{tcdrow})',  # P Assurance
+            17: '=IF(AND(TCD!L{tcdrow}="",TCD!Q{tcdrow}=""),"",IF(SUM(TCD!L{tcdrow},TCD!Q{tcdrow})>15,29,9.5))',  # Q Zones éloignées
+            18: '=_xlfn.XLOOKUP(F{row},TCD!E:E,TCD!K:K,"")',  # R Colis volumineux
+            19: '=IF(TCD!I{tcdrow}="","",IF(TCD!I{tcdrow}>8.5,17,8.5))',  # S Adresses
+            20: "=TCD!Y{tcdrow}",  # T Frêt (reference telle quelle du modele, cf. docstring)
+        }
+        # K (Nbr Colis) : valeur fixe 1 en ligne 2, formule "=K2" recopiee ensuite (comme le modele).
+        wsImp.Cells(2, 11).Value = 1
+        if newLastImp > 2:
+            retry(lambda: wsImp.Range(wsImp.Cells(3, 11), wsImp.Cells(newLastImp, 11))
+                  .__setattr__("Formula", [["=K{prev}".format(prev=r - 1)] for r in range(3, newLastImp + 1)]))
+        # B (Date validité tarif) : valeur fixe en ligne 2 (mise a jour vers le mois traite),
+        # formule "=B{n-1}" recopiee ensuite (meme piege deja corrige pour DPD/Mondial Relay/BLS).
+        if date_validite_serial is not None:
+            wsImp.Cells(2, 2).Value = date_validite_serial
+        else:
+            print("AVERTISSEMENT: 'Date LT' introuvable -> 'Fichier import'!B2 non mise à jour, reste celle du modèle.")
+        if newLastImp > 2:
+            retry(lambda: wsImp.Range(wsImp.Cells(3, 2), wsImp.Cells(newLastImp, 2))
+                  .__setattr__("Formula", [["=B{prev}".format(prev=r - 1)] for r in range(3, newLastImp + 1)]))
+        for col_idx, tmpl in formulas_import.items():
+            retry(lambda c=col_idx, t=tmpl: wsImp.Range(wsImp.Cells(2, c), wsImp.Cells(newLastImp, c))
+                  .__setattr__("Formula", [[t.format(row=r, tcdrow=r + 1)] for r in range(2, newLastImp + 1)]))
         if newLastImp < oldLastImp:
             retry(lambda: wsImp.Range(wsImp.Cells(newLastImp + 1, 1), wsImp.Cells(oldLastImp, LAST_COL_IMPORT)).ClearContents())
+        print(f"'Fichier import' : formules du modele reconstruites jusqu'a la ligne {newLastImp} (TCD ligne {newLastImp + 1}).")
 
-        # Reactive l'AutoFilter (desactive plus haut, meme piege que "Facture Chronopost" --
-        # jamais reactive avant ce fix, cf. 2026-08-13). Modele reel : A1:W3941 sur juillet.
+        # Reactive l'AutoFilter (desactive plus haut, meme piege que "Facture Chronopost").
         wsImp.Range(wsImp.Cells(1, 1), wsImp.Cells(max(newLastImp, 2), LAST_COL_IMPORT)).AutoFilter()
 
         xl.Calculate()

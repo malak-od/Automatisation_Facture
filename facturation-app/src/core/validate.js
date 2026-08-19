@@ -20,10 +20,15 @@ function validate(importRows, opts = {}) {
     if (!o.Pays) alerts.push(`L${l} ${t}: PAYS manquant`);
 
     // -- Zone --
-    const zoneInconnue = o.Zone.includes('0France00') || o.Zone.includes('0étranger00');
+    const zoneHorsGrille = o.Zone.includes('0France00') || o.Zone.includes('0étranger00');
+    // Zone deja signalee comme non resolue PAR LE CARRIER LUI-MEME (son propre
+    // warnings.push() a la construction de la ligne, ex. Colissimo/Mondial Relay
+    // "zone inconnue", DPD "inconnu") -- pas la peine de dupliquer l'alerte ici,
+    // route en info comme le pattern hors-grille Kuehne.
+    const zoneNonResolue = /^zone inconnue$/i.test(o.Zone) || /^inconnu$/i.test(o.Zone);
     if (!o.Zone) {
       alerts.push(`L${l} ${t}: ZONE manquante`);
-    } else if (zoneInconnue) {
+    } else if (zoneHorsGrille) {
       if (o._horsGrille) {
         // Affretement ou navette : zone vide VOULUE (pas de grille tarifaire) -> normal
         const type = o._metier === 'AFFR' ? 'affrètement' : 'navette';
@@ -31,6 +36,8 @@ function validate(importRows, opts = {}) {
       } else {
         alerts.push(`L${l} ${t}: ZONE inconnue (${o.Zone}) - dept non trouve`);
       }
+    } else if (zoneNonResolue) {
+      infos.push(`L${l} ${t}: zone/mode non résolu(e) (${o.Zone}) — déjà signalé par le transporteur, à compléter dans la table de correspondance`);
     } else if (o.Zone.includes('étranger')) {
       alerts.push(`L${l} ${t}: ZONE etranger (${o.Zone})`);
     }

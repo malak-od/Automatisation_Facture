@@ -22,6 +22,7 @@ const execFileAsync = require('util').promisify(execFile);
 const XLSX = require('xlsx');
 const { round2 } = require('../../core/csv');
 const { IMPORT_COLUMNS } = require('../../core/importSchema');
+const { validate } = require('../../core/validate');
 
 // positions des colonnes utiles dans l'export du suivi (index 0-based)
 const COL = { remise: 7, suivi: 9, nom: 11, pays: 16, statut: 24, poids: 30 };
@@ -143,6 +144,16 @@ async function process(files) {
   } catch (e) {
     const stderr = (e.stderr && e.stderr.toString) ? e.stderr.toString() : String(e.stderr || e.message || '');
     alerts.push(`Finaliseur Delivengo KO : ${stderr.split(/\r?\n/).slice(0, 4).join(' | ') || e.message} (import ERP non généré, classeur en repli générique)`);
+  }
+
+  if (importRows.length) {
+    // skipPoidsDecimal : poids Delivengo = MAX(poids brut WMS, poids export suivi/1000)
+    // arrondi a 2 decimales (kg precis, cf. finaliser_delivengo.py ROUND(...,2)), pas la
+    // regle ARRONDI.SUP a 1 decimale des transporteurs colis classiques -- meme cas que
+    // Lettres (poids non tarifaire ici : le frêt Delivengo ne depend pas du poids).
+    const { alerts: valAlerts, infos: valInfos } = validate(importRows, { skipPoidsDecimal: true });
+    alerts.push(...valAlerts);
+    infos.push(...valInfos);
   }
 
   const controle = {};

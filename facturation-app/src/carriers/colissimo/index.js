@@ -47,6 +47,35 @@ function colIdx(header, name) {
   return header.indexOf(name);
 }
 
+// Deduction du poste ERP pour un "Code charge" ABSENT de table_correspondance, a partir de
+// mots-cles dans le CODE lui-meme et dans la "Description" (colonne F/AC du CSV, texte
+// libre) -- demande utilisateur 2026-08-17. Vocabulaire confirme contre les 20 codes reels
+// deja valides de juin 2026 (cf. table_correspondance) : chaque poste a un champ lexical
+// stable (ex. "destination"/"eloigne" -> Zones eloignees sur les 4 codes CH_S_D_* connus,
+// "volumetrique"/"mecanisable"/"dimension" -> Colis volumineux sur CH_S_NM_*/CH_S_PVR_*).
+// Teste code+description CONCATENES (le prefixe du code, ex. "CH_S_", porte deja un indice
+// -- P=Port/Fret, S=Supplement generique, O=Option), premiere correspondance qui matche
+// gagne (ordre = du plus specifique au plus generique). Retourne null si aucun mot-cle ne
+// matche (reste "non reclasse", comme avant -- jamais d'invention si le texte ne dit rien).
+const DEDUCTION_MOTS_CLES = [
+  // [poste ERP, liste de mots-cles (matches sur code+description en MAJUSCULES sans accents)]
+  ['Taxe gazole', ['GAZOLE', 'CAE', 'AJUSTEMENT ENERGIE', 'ENERGIE']],
+  ['Assurance', ['ASSURANCE']],
+  ['Zones éloignées', ['DESTINATION', 'ELOIGNE', 'ELOIGNEE', 'OUTRE-MER', 'OUTRE MER']],
+  ['Colis volumineux', ['VOLUMETRIQUE', 'MECANISABLE', 'DIMENSION', 'DIMENSIONS']],
+  ['Adresse', ['ADRESSE', 'ETIQUETAGE', 'REETIQUETAGE', "QUALITE D'ANNONCE", 'QUALITE DANNONCE', 'QUALITE ANNONCE']],
+  ['Droits et taxes', ['DOUANE', 'DDP', 'TAXE', 'NONCONFORMITE']],
+  ['Frêt', ['CHARGE', 'PORT', 'FRET', 'SURETE', 'DECARBONATION', 'PARTENAIRE']],
+];
+
+function deduireCategorieParMotsCles(codeCharge, description) {
+  const texte = normKey(`${codeCharge} ${description}`);
+  for (const [poste, motsCles] of DEDUCTION_MOTS_CLES) {
+    if (motsCles.some((mot) => texte.includes(normKey(mot)))) return poste;
+  }
+  return null;
+}
+
 async function process(files) {
   const prestaPaths = files.presta || [];
   const douanePaths = files.douane || [];
@@ -69,6 +98,7 @@ async function process(files) {
     const iNumeroLigne = colIdx(header, 'N de ligne');
     const iNumeroFacture = colIdx(header, 'N facture');
     const iDate = colIdx(header, 'Date');
+    const iDescription = colIdx(header, 'Description');
     const iProduit = colIdx(header, 'Produit');
     const iNColis = colIdx(header, 'N colis');
     const iPaysOrigine = colIdx(header, 'Pays Origine');
@@ -92,6 +122,7 @@ async function process(files) {
       lignes.push({
         numeroFacture: iNumeroFacture >= 0 ? String(r[iNumeroFacture] || '').trim() : '',
         produit: iProduit >= 0 ? String(r[iProduit] || '').trim() : '',
+        description: iDescription >= 0 ? String(r[iDescription] || '').trim() : '',
         nColis,
         // Colissimo n'a PAS de "Pays Origine"/"Pays Destination" sur les lignes de douane
         // (confirme : ces colonnes restent vides, cf. docstring en tete de fichier) --
@@ -115,6 +146,20 @@ async function process(files) {
   for (const p of douanePaths) parseFichier(p, true);
   if (!lignes.length) warnings.push('Aucune ligne "colis" trouvée dans les fichier(s) fournis.');
 
+  // Trouve 2026-08-17 (suite retour utilisateur) : un tracking dont TOUTES les lignes se
+  // classent en "Droits et taxes" (frais de douane isolés, cf. CH_DOUANE) n'a besoin
+  // d'aucune zone/pays -- le montant est deja au bon poste ERP, la zone/mode d'envoi
+  // n'intervient dans AUCUN calcul financier (TCD/Bilan Factures), seulement dans la
+  // colonne d'affichage "Import CSV". Avertir "à compléter à la main" dans ce cas serait
+  // du bruit sans valeur (rien a completer qui change quoi que ce soit). Le warning
+  // "aucun pays de destination..." ne se declenche donc que si le tracking a AU MOINS UNE
+  // ligne dont la categorie n'est pas "Droits et taxes" (vrai transport : Frêt/Adresse/...).
+  const trackingsAvecTransport = new Set();
+  for (const l of lignes) {
+    const cat = cfg.table_correspondance[l.codeCharge];
+    if (cat !== 'Droits et taxes') trackingsAvecTransport.add(l.nColis);
+  }
+
   // Colonnes A-G de "Facture Colissimo" : Pays (ISO)/Mode envoi/Zone/Concat/Prefixe/Pays/
   // Categorie -- formules exactes confirmees ('Facture Colissimo'!A2:G2, cf. config.json).
   //
@@ -135,12 +180,40 @@ async function process(files) {
     const modeEntry = MODES_ENVOIS_PAR_CONCAT[concat];
     const zone = modeEntry ? modeEntry.zone : 'zone inconnue';
     const mode = modeEntry ? modeEntry.mode_transport : 'zone inconnue';
-    if (!modeEntry) warnings.push(`Colis ${l.nColis} (facture ${l.numeroFacture}) : mode envoi "${concat}" absent de "Modes envois" — zone inconnue.`);
+    // Meme regle que le warning "pays" plus bas : si ce tracking n'a QUE des lignes
+    // "Droits et taxes" (charge de douane isolee), la zone/mode d'envoi n'affecte aucun
+    // montant -- pas la peine de signaler "zone inconnue" (decision utilisateur 2026-08-17).
+    if (!modeEntry && trackingsAvecTransport.has(l.nColis)) warnings.push(`Colis ${l.nColis} (facture ${l.numeroFacture}) : mode envoi "${concat}" absent de "Modes envois" — zone inconnue.`);
 
     if (!paysIso && l.paysDestination) warnings.push(`Colis ${l.nColis} (facture ${l.numeroFacture}) : pays "${l.paysDestination}" absent de "Pays" — "Pays à créer".`);
+    // Trouve 2026-08-17 (donnees reelles de juillet 2026, colis CB533959479FR/CB534252625FR) :
+    // certaines charges "Frais de douane" arrivent SANS aucune ligne "Prestations au colis"
+    // correspondante dans les fichiers du mois traite (le transport a eu lieu un mois anterieur,
+    // seule la regularisation douaniere tombe ce mois-ci) -- le CSV douane n'a pas de colonne
+    // Pays Destination (cf. load_rows), donc pays/zone/mode restent inconnus, PAS de warning
+    // "absent de Pays" (paysDestination est vide, pas juste non reconnu) : silencieux sans ceci.
+    // Averti UNIQUEMENT si ce tracking a par ailleurs une ligne de vrai transport (Frêt/
+    // Adresse/...) -- si TOUTES ses lignes sont "Droits et taxes", la zone/pays manquant(e)
+    // n'affecte aucun montant, pas la peine de demander un complement manuel inutile
+    // (decision utilisateur 2026-08-17).
+    else if (!paysIso && !l.paysDestination && trackingsAvecTransport.has(l.nColis)) warnings.push(`Colis ${l.nColis} (facture ${l.numeroFacture}) : aucun pays de destination dans les fichiers fournis (probable charge de douane isolée, sans ligne "Prestations au colis" ce mois-ci) — à compléter à la main dans "Import CSV".`);
 
-    const categorie = cfg.table_correspondance[l.codeCharge];
-    if (!categorie) warnings.push(`Colis ${l.nColis} (facture ${l.numeroFacture}) : code charge "${l.codeCharge}" absent de "Table de correspondance" — non reclassé.`);
+    let categorie = cfg.table_correspondance[l.codeCharge];
+    if (!categorie) {
+      // Code jamais vu -- tente une deduction par mots-cles (code + Description, cf.
+      // deduireCategorieParMotsCles) AVANT d'abandonner, plutot que de laisser la ligne
+      // non reclassee (ce qui provoquerait un #N/A en cascade dans le TCD genere par le
+      // finaliseur Excel). Toujours signale (jamais silencieux) : la deduction est une
+      // estimation, a confirmer/ajouter dans "Table de correspondance" (decision
+      // utilisateur 2026-08-17).
+      const deduite = deduireCategorieParMotsCles(l.codeCharge, l.description);
+      if (deduite) {
+        categorie = deduite;
+        warnings.push(`Colis ${l.nColis} (facture ${l.numeroFacture}) : code charge "${l.codeCharge}" (${l.description || 'sans description'}) absent de "Table de correspondance" — classé automatiquement en "${deduite}" par mots-clés, à vérifier/ajouter à la table.`);
+      } else {
+        warnings.push(`Colis ${l.nColis} (facture ${l.numeroFacture}) : code charge "${l.codeCharge}" (${l.description || 'sans description'}) absent de "Table de correspondance" — non reclassé.`);
+      }
+    }
 
     const postesLigne = Object.fromEntries(POSTE_KEYS.map((k) => [k, 0]));
     if (categorie && POSTE_KEYS.includes(categorie)) postesLigne[categorie] = round2(l.totalHt);
@@ -227,7 +300,13 @@ async function process(files) {
       const buf = require('fs').readFileSync(p);
       const { text } = await pdfParse(buf);
       const mFacture = /FACTURE N[°\s]*([A-Z0-9]+)/.exec(text);
-      const mTotal = /TOTAL\s*HT\s*([\d\s]+[.,]\d{2})\s*€/.exec(text);
+      // "€" du PDF Colissimo mal encode par pdf-parse (ressort en "¤", pas � comme avec
+      // pdfplumber cote Python) -- BUG TROUVE 2026-08-17, meme famille que le fix Python
+      // (finaliser_colissimo.py::extract_pdf_total_ht) : "." accepte n'importe quel caractere
+      // de fin au lieu du "€" littéral qui ne matchait plus jamais. TOTAL HT et son montant
+      // sont aussi separes par un saut de ligne ici (pas juste des espaces) -- deja couvert
+      // par \s*.
+      const mTotal = /TOTAL\s*HT\s*([\d\s]+[.,]\d{2})\s*./.exec(text);
       if (!mFacture || !mTotal) { warnings.push(`PDF ${p.split(/[\\/]/).pop()} : numéro de facture/total introuvable, ignoré pour la réconciliation.`); continue; }
       const numeroFacture = mFacture[1];
       const totalPdf = num(mTotal[1].replace(/\s/g, ''));

@@ -24,7 +24,14 @@ const upload = multer({ dest: UPLOADS });
  * l'ecriture) : le message brut Node/Windows ne dit pas quoi faire. */
 function explainFileError(e, targetPath) {
   const msg = String((e && e.stderr) || e.message || e);
-  if (/EBUSY|resource busy|being used by another process/i.test(msg)) {
+  // Node (EBUSY/"resource busy") ET Python (shutil.copyfile via PermissionError, message
+  // localise different selon la version/langue Windows -- "Permission denied", "Errno 13",
+  // "utilisé par un autre programme"...) -- meme cause reelle (fichier de sortie ouvert dans
+  // Excel au moment de la generation), 2 sources de traceback distinctes (constate sur TNT,
+  // 2026-08-19 : shutil.copyfile echoue en PermissionError, pas capte par la regex d'origine
+  // -> le vrai message n'etait jamais affiche, l'utilisateur voyait a la place le crash en
+  // cascade du repli exceljs, "Cannot read properties of undefined (reading 'map')").
+  if (/EBUSY|resource busy|being used by another process|PermissionError|Errno 13|Permission denied|utilis[ée] par un autre programme/i.test(msg)) {
     return new Error(`Le fichier "${path.basename(targetPath)}" est actuellement ouvert dans Excel (ou un autre programme) — ferme-le puis réessaie.`);
   }
   return e;
@@ -120,10 +127,15 @@ app.post('/api/process', upload.any(), async (req, res) => {
         const extra = carrier.finalizer.buildArgs ? carrier.finalizer.buildArgs(files, period, __dirname) : (files.csv || []);
         const { stdout } = await execFileAsync('python', [scriptAbs, templateAbs, wbPath, ...extra], { windowsHide: true, maxBuffer: 20 * 1024 * 1024 });
         workbookMode = 'clone';
-        // le finaliseur peut signaler des cas a verifier (ex. poids introuvable dans les bruts)
+        // le finaliseur peut signaler des cas a verifier (ex. poids introuvable dans les bruts,
+        // pays/mode envoi ajoutes automatiquement -- cf. finaliser_colissimo.py)
         for (const line of String(stdout || '').split(/\r?\n/)) {
-          const m = line.match(/^INFO_POIDS_MANQUANT:(.+)$/);
-          if (m) (result.infos = result.infos || []).push(`Poids introuvable dans les exports bruts : ${m[1].trim()} (plancher 0,15 appliqué — à vérifier/saisir à la main)`);
+          const mPoids = line.match(/^INFO_POIDS_MANQUANT:(.+)$/);
+          if (mPoids) (result.infos = result.infos || []).push(`Poids introuvable dans les exports bruts : ${mPoids[1].trim()} (plancher 0,15 appliqué — à vérifier/saisir à la main)`);
+          const mPays = line.match(/^AJOUT_PAYS_AUTO:(.+)$/);
+          if (mPays) (result.warnings = result.warnings || []).push(`Pays ajouté automatiquement à la table "Pays" : ${mPays[1].trim()}`);
+          const mMode = line.match(/^AJOUT_MODE_ENVOI_AUTO:(.+)$/);
+          if (mMode) (result.warnings = result.warnings || []).push(`Mode d'envoi déduit automatiquement (à vérifier) : ${mMode[1].trim()}`);
         }
       } catch (e) {
         console.warn('Finaliseur Excel KO :', String(e.stderr || e.message || '').slice(0, 300));

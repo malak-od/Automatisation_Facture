@@ -225,18 +225,21 @@ function headLogoFallback(img) {
   img.replaceWith(badge);
 }
 
-// Mois de facturation propose par defaut (mois precedent, cas le plus frequent quand on
-// facture "le mois dernier") + quelques mois autour pour ajuster -- champ INFORMATIF
-// uniquement (decision utilisateur 2026-08-14) : sert a la verification visuelle avant envoi,
-// la vraie periode utilisee pour nommer les fichiers reste calculee cote carrier depuis le
-// contenu des documents deposes (voir d.periode affiche dans le resultat).
+// Mois de facturation : TOUS les mois calendaires de l'annee en cours (janvier a decembre),
+// pour tous les transporteurs -- demande utilisateur 2026-08-18 (l'ancienne fenetre glissante
+// mois-1/mois+2 excluait tout mois plus ancien, ex. juin quand on est en aout). Mois courant
+// preselectionne par defaut. Champ INFORMATIF uniquement (decision utilisateur 2026-08-14) :
+// sert a la verification visuelle avant envoi, la vraie periode utilisee pour nommer les
+// fichiers reste calculee cote carrier depuis le contenu des documents deposes (voir
+// d.periode affiche dans le resultat).
 function monthOptions() {
   const now = new Date();
+  const year = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
   const opts = [];
-  for (let i = -1; i <= 2; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const val = `${d.getFullYear()}_${String(d.getMonth()+1).padStart(2,'0')}`;
-    opts.push(`<option value="${val}" ${i===0?'selected':''}>${val.replace('_',' ')}</option>`);
+  for (let m = 1; m <= 12; m++) {
+    const val = `${year}_${String(m).padStart(2,'0')}`;
+    opts.push(`<option value="${val}" ${m===currentMonth?'selected':''}>${val.replace('_',' ')}</option>`);
   }
   return opts.join('');
 }
@@ -354,8 +357,9 @@ function renderResult(d, monthChosen) {
     <div class="card"><h3>2. Résultat — ${d.lignes} lignes</h3>
       ${hasTotals ? `<div class="total">${d.totalHt.toFixed(2)} € HT</div>
       <table><thead><tr><th>Poste</th><th style="text-align:right">Montant €</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
-      <div class="kv" style="margin-top:12px"><b>${d.alerts.length} alerte(s) à vérifier</b>${(d.infos||[]).length?` · ${d.infos.length} info(s) (normal)`:''}</div>
+      <div class="kv" style="margin-top:12px"><b>${d.alerts.length} alerte(s) à vérifier</b>${(d.warnings||[]).length?` · ${d.warnings.length} point(s) à compléter à la main`:''}${(d.infos||[]).length?` · ${d.infos.length} info(s) (normal)`:''}</div>
       ${d.alerts.length?`<div class="alerts">${d.alerts.map(a=>`<div>⚠️ ${a}</div>`).join('')}</div>`:''}
+      ${(d.warnings||[]).length?`<details open style="margin-top:8px"><summary style="cursor:pointer;color:#f59e0b">📌 ${d.warnings.length} point(s) à compléter/vérifier à la main</summary><div class="alerts" style="color:#f59e0b">${d.warnings.map(w=>`<div>${w}</div>`).join('')}</div></details>`:''}
       ${(d.infos||[]).length?`<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">ℹ️ ${d.infos.length} ligne(s) affrètement/navette — zone volontairement vide (hors grille tarifaire)</summary><div class="alerts" style="color:#7dd3fc">${d.infos.map(a=>`<div>${a}</div>`).join('')}</div></details>`:''}
     </div>
     <div class="card"><h3>3. Fichiers générés${d.periode ? ' — période ' + d.periode : ''}</h3>

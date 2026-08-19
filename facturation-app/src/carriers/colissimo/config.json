@@ -33,7 +33,7 @@
     "CH_P_9M": "Frêt",
     "CH_S_RP_RETOURPAYANT": "Frêt"
   },
-  "_comment_modes_envois": "Feuille 'Modes envois' -- mapping concatenation(prefixe tracking 2 lettres + code pays ISO) -> mode envoi ERP (colonne 'Zone' du modele, ex. 'FR_DOM') + TVA + mode de transport (DOM/DOS/etc). Cle de recherche = LEFT(N colis,2) & XLOOKUP(Pays Destination, Pays!A:A, Pays!B:B) -- confirme formule exacte 'Facture Colissimo'!D2 = E2&F2. 327 entrees extraites du fichier reel de juin 2026.",
+  "_comment_modes_envois": "Feuille 'Modes envois' -- mapping concatenation(prefixe tracking 2 lettres + code pays ISO) -> mode envoi ERP (colonne 'Zone' du modele, ex. 'FR_DOM') + TVA + mode de transport (DOM/DOS/etc). Cle de recherche = LEFT(N colis,2) & XLOOKUP(Pays Destination, Pays!A:A, Pays!B:B) -- confirme formule exacte 'Facture Colissimo'!D2 = E2&F2. 327 entrees extraites du fichier reel de juin 2026, +1 nouvelle entree confirmee sur le fichier reel de juillet 2026 (CBIM -> zone 2_DOS_UK, mode DOS, tva 0 -- meme logique evolutive que 'table_correspondance'/'pays', a re-diffe si 'zone inconnue' apparait un mois futur).",
   "modes_envois": [
     {
       "concat": "5RFR",
@@ -593,6 +593,14 @@
       "pays": "IE",
       "zone": "2_DOS_autres",
       "tva": 0.2,
+      "mode_transport": "DOS"
+    },
+    {
+      "concat": "CBIM",
+      "prefixe": "CB",
+      "pays": "IM",
+      "zone": "2_DOS_UK",
+      "tva": 0,
       "mode_transport": "DOS"
     },
     {
@@ -2652,7 +2660,7 @@
       "mode_transport": "A2P"
     }
   ],
-  "_comment_pays": "Feuille 'Pays' -- mapping Nom pays complet (FR, tel qu'il apparait dans 'Pays Destination'/'Pays Origine' du CSV brut) -> code ISO 2 lettres. Lookup en amont de 'modes_envois' (le concat utilise le code ISO, pas le nom complet). 64 pays extraits du fichier reel.",
+  "_comment_pays": "Feuille 'Pays' -- mapping Nom pays complet (FR, tel qu'il apparait dans 'Pays Destination'/'Pays Origine' du CSV brut) -> code ISO 2 lettres. Lookup en amont de 'modes_envois' (le concat utilise le code ISO, pas le nom complet). 64 pays extraits du fichier reel de juin 2026, +2 nouveaux pays confirmes sur le fichier reel de juillet 2026 (ILE DE MAN -> IM, SINGAPOUR -> SG -- meme logique evolutive que 'table_correspondance', a re-diffe si 'Pays a creer' apparait un mois futur).",
   "pays": [
     {
       "nom": "AFRIQUE DU SUD",
@@ -2909,6 +2917,14 @@
     {
       "nom": "TURQUIE",
       "code": "TR"
+    },
+    {
+      "nom": "ILE DE MAN",
+      "code": "IM"
+    },
+    {
+      "nom": "SINGAPOUR",
+      "code": "SG"
     }
   ],
   "_comment_tva": "TVA calculee par regle simple depuis le CSV brut (colonne 'Taux TVA', PAS une table pays->TVA separee comme Chronopost/BLS) : =IF(Taux TVA CSV = 20, 0.2, 0) -- confirme formule exacte 'Import CSV'!N2. Tout taux different de 20 (0%, exports hors UE...) donne TVA=0.",
