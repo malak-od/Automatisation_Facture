@@ -255,27 +255,33 @@ def main():
     lignes_retenues = []
     for r in all_rows:
         t = str(r[COL["numero_suivi"]] if len(r) > COL["numero_suivi"] else "").strip()
+        montant_net = coerce(r[COL["montant_net"]] if len(r) > COL["montant_net"] else "")
+        montant_net = montant_net if isinstance(montant_net, (int, float)) else 0
         if t.upper().startswith("1Z79"):
             code_classe = str(r[COL["code_classe"]] if len(r) > COL["code_classe"] else "").strip().upper()
             if code_classe not in ("TAX", "FSC"):
-                montant_ligne = coerce(r[COL["montant_net"]] if len(r) > COL["montant_net"] else "")
-                montant_ligne = montant_ligne if isinstance(montant_ligne, (int, float)) else 0
-                demandes_avoir_1z79[t] = round(demandes_avoir_1z79.get(t, 0.0) + montant_ligne, 2)
+                demandes_avoir_1z79[t] = round(demandes_avoir_1z79.get(t, 0.0) + montant_net, 2)
             else:
                 demandes_avoir_1z79.setdefault(t, 0.0)
-            lignes_retenues.append(r)  # reste dans "Facture UPS" MEME a montant=0 (filtre ci-dessous non applique aux 1Z79)
+            # Lignes a Montant net = 0 : demande utilisateur 2026-08-25 -- supprimees de
+            # "Facture UPS" MEME pour les 1Z79 (BUG TROUVE 2026-08-25, cf. carrier Node
+            # index.js pour le detail complet : le fait-main a 0/49 lignes 1Z79 a montant=0,
+            # alors que le CSV brut en a 9/58 -- toutes supprimees). L'agregation "Demande
+            # avoir" ci-dessus reste faite AVANT ce filtre.
+            if montant_net == 0:
+                n_montant_net_zero += 1
+                continue
+            lignes_retenues.append(r)
             continue
         ref1 = str(r[COL["ref1"]] if len(r) > COL["ref1"] else "").strip()
         if not t and ref_vide(ref1):
             n_sans_identification += 1
             continue
-        # Lignes a Montant net = 0 : demande utilisateur 2026-08-25 -- supprimees de "Facture
-        # UPS" (pas seulement du fichier import), cf. carrier Node index.js pour le detail
-        # complet (confirme sur reel, facture 202600782885 : 13513 lignes a montant=0 AVEC
-        # tracking rempli, distinct du filtre "sans identification" ci-dessus). Ne s'applique
-        # PAS aux 1Z79 (cf. continue plus haut).
-        montant_net = coerce(r[COL["montant_net"]] if len(r) > COL["montant_net"] else "")
-        if isinstance(montant_net, (int, float)) and montant_net == 0:
+        # Lignes a Montant net = 0 (hors 1Z79, deja traite ci-dessus) : demande utilisateur
+        # 2026-08-25 -- supprimees de "Facture UPS" (pas seulement du fichier import),
+        # confirme sur reel (facture 202600782885 : 13513 lignes a montant=0 AVEC tracking
+        # rempli, distinct du filtre "sans identification" ci-dessus).
+        if montant_net == 0:
             n_montant_net_zero += 1
             continue
         lignes_retenues.append(r)

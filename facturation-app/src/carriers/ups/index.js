@@ -250,13 +250,25 @@ async function process(files, opts) {
   const lignesRetenues = [];
   for (const r of allRows) {
     const tracking = String(r[COL.numeroSuivi] || '').trim();
+    const montantNetLigne = num(r[COL.montantNet]);
     if (/^1Z79/i.test(tracking)) {
       if (!demandesAvoir1Z79.has(tracking)) demandesAvoir1Z79.set(tracking, 0);
       const codeClasse = String(r[COL.codeClasse] || '').trim().toUpperCase();
       if (codeClasse !== 'TAX' && codeClasse !== 'FSC') {
-        demandesAvoir1Z79.set(tracking, round2(demandesAvoir1Z79.get(tracking) + num(r[COL.montantNet])));
+        demandesAvoir1Z79.set(tracking, round2(demandesAvoir1Z79.get(tracking) + montantNetLigne));
       }
-      lignesRetenues.push(r); // reste dans "Facture UPS" MEME a montant=0 (cf. filtre ci-dessous, non applique aux 1Z79)
+      // Lignes a Montant net = 0 : demande utilisateur 2026-08-25 -- supprimees de "Facture
+      // UPS" MEME pour les 1Z79 (BUG TROUVE 2026-08-25 : je pensais a tort qu'elles etaient
+      // gardees a 0EUR dans le fait-main -- confirme sur reel, tracking 1Z79A7T06819992295
+      // et 8 autres : le fait-main a 0/49 lignes 1Z79 a montant=0, alors que le CSV brut en a
+      // 9/58 -- toutes supprimees, ex. categorie "code inconnu" a 0EUR jamais dans le
+      // fait-main). L'agregation "Demande avoir" ci-dessus reste faite AVANT ce filtre (elle
+      // doit voir toutes les lignes, y compris montant=0, pour le calcul TAX/FSC exclus).
+      if (montantNetLigne === 0) {
+        nbMontantNetZero++;
+        continue;
+      }
+      lignesRetenues.push(r);
       continue;
     }
     const ref1 = String(r[COL.ref1] || '').trim();
@@ -264,14 +276,13 @@ async function process(files, opts) {
       nbSansIdentification++;
       continue;
     }
-    // Lignes a Montant net = 0 : demande utilisateur 2026-08-25 -- supprimees de "Facture
-    // UPS" (pas seulement du fichier import), meme principe que le filtre tracking/ref1 vide
-    // ci-dessus. CONFIRME sur reel (facture 202600782885, juillet 2026) : 13513 lignes a
-    // montant=0 AVEC tracking rempli expliquaient un ecart massif (+13513 lignes) entre le
-    // fichier genere et le fait-main -- distinct du filtre "sans identification" (9046 lignes
-    // SANS tracking, deja gere ci-dessus). Ne s'applique PAS aux 1Z79 (cf. continue plus haut,
-    // gardees meme a 0EUR -- confirme : 9 lignes 1Z79 a montant=0 presentes dans le fait-main).
-    if (num(r[COL.montantNet]) === 0) {
+    // Lignes a Montant net = 0 (hors 1Z79, deja traite ci-dessus) : demande utilisateur
+    // 2026-08-25 -- supprimees de "Facture UPS" (pas seulement du fichier import), meme
+    // principe que le filtre tracking/ref1 vide ci-dessus. CONFIRME sur reel (facture
+    // 202600782885, juillet 2026) : 13513 lignes a montant=0 AVEC tracking rempli
+    // expliquaient un ecart massif (+13513 lignes) entre le fichier genere et le fait-main --
+    // distinct du filtre "sans identification" (9046 lignes SANS tracking, deja gere ci-dessus).
+    if (montantNetLigne === 0) {
       nbMontantNetZero++;
       continue;
     }

@@ -1,245 +1,115 @@
-# Facturation transporteur Kuehne+Nagel — Documentation A→Z
+# Automatisation Facturation Transporteurs — Documentation
 
-*Document de référence pour l'automatisation. Rédigé à partir du reverse-engineering du classeur Excel de calcul, des 2 CSV bruts K&N, des 2 factures PDF, des docs de process (.docx) — puis vérifié indépendamment (audit multi-agents + prototype Python validé 187/187 lignes contre l'export ERP réel de juin 2026).*
-
----
-
-## 0. Résumé en une phrase
-
-Chaque mois, Kuehne+Nagel (K&N) facture La Ruche Logistique via **2 fichiers CSV** (une facture de transport + une facture d'« événements ») et **2 PDF** ; le process consiste à **traduire ces ~183 colonnes techniques K&N en un fichier d'import ERP** de 23 colonnes (une ligne par expédition, ventilée en 8 postes de charge), **réconcilié au centime avec les PDF**, pour que l'ERP puisse ensuite **refacturer les clients de La Ruche**.
+*Vue d'ensemble du projet et de son déroulement, transporteur par transporteur.*
 
 ---
 
-## 1. Le contexte métier (le « pourquoi »)
+## 1. Le projet en une phrase
 
-- **La Ruche Logistique** expédie des colis (vin — univers « Viticolis ») pour ses clients, via plusieurs transporteurs : UPS (principal), Geodis, **Kuehne+Nagel**, BLS…
-- **Deux niveaux de facturation :**
-  1. **Achat** : le transporteur (K&N) facture La Ruche pour le transport réalisé.
-  2. **Vente / refacturation** : La Ruche refacture ce transport à ses propres clients, à un **tarif de vente** (indexé par zone), avec une marge.
-- **Le fichier d'import ERP est le pivot** : on y injecte, ligne par ligne, le coût/refacturation de chaque expédition. C'est ce fichier que le présent process produit.
-- **Rôle spécifique de K&N :**
-  - Flux **EDI** : chaque jour La Ruche envoie ses expéditions à K&N ; les données reviennent avec une **Ref EDI** (= le n° d'expédition interne de La Ruche).
-  - K&N fait partie du dispositif **Navette** (tarifs négociés, factures internes) : sa facture Navette est **incluse dans le classeur Excel** (contrairement à Geodis, PDF à part).
-  - **Taxe Gasoil** : lue **directement dans l'Excel envoyé par K&N** (ni site web, ni ERP) — spécificité K&N.
-  - Cycle **mensuel** ; la facture K&N est récupérée/préparée par Pauline et déposée sur le serveur.
+Chaque mois, chaque transporteur envoie ses données de facturation brutes (CSV/Excel/PDF) ; le projet **traduit ces données hétérogènes en un fichier d'import ERP standardisé** (23 colonnes, une ligne par expédition, ventilée en 8 postes de charge), **réconcilié avec les factures PDF officielles**, pour permettre la refacturation aux clients finaux.
 
----
+## 2. Le principe général
 
-## 2. Glossaire (à connaître avant de lire la suite)
+Pour chaque transporteur, le processus suit le même schéma :
 
-| Terme | Définition |
-|---|---|
-| **EDI** | Échange de Données Informatisé : flux automatisé d'expéditions envoyé quotidiennement au transporteur. |
-| **Messagerie** | Colis groupés, tarifés au poids (taxable). Sous-types K&N : `STANDARD`, `FIRST`. |
-| **Affrètement (AFFR)** | Camion / lot complet, tarifé à la tonne — logique et taux gazole différents de la messagerie. |
-| **Ref EDI** | Identifiant d'expédition **de La Ruche** (ex. `5001333` en messagerie, `EXP20260603-2777654` sur les événements, **vide** en affrètement). |
-| **ComRefExpedition** | Référence **K&N** de l'expédition (ex. `26A050838106`). Devient **Réf.1** dans l'import. |
-| **N° Tracking** (import) | = **Ref EDI si présente, sinon ComRefExpedition**. |
-| **TCD** | Tableau Croisé Dynamique (pivot). Ici : **outil de contrôle uniquement**, PAS de production de l'import. |
-| **ERP** | Progiciel de gestion dans lequel on injecte le fichier d'import pour facturer. |
-| **Zone** | Clé de tarification `DeptExp + France/étranger + pad2(DeptDest)` (ex. `21France78`). |
-| **Poids taxable** | Poids facturable (peut différer du poids réel). ⚠️ L'import utilise le **Poids réel**, pas le taxable. |
-| **E / P** | Entreprise / Particulier. Conditionne la **plus-value BtoC** (surcoût livraison particulier). |
-| **Souffrance** | Colis bloqué / non livrable en attente de traitement. |
-| **Présentation** | Nouvelle tentative de livraison, facturée. |
-| **Correction de poids** | Réajustement après pesée réelle. |
-| **Taxe Gasoil / surcharge gazole** | Surcoût carburant en %, indexé sur un prix de référence (juin 2026 : 1,7834 €/l). |
-| **Incoterm DAP** | *Delivered At Place* : répartition des frais/responsabilités transport & douane. |
-| **Demande d'avoir** | Correction/remboursement en faveur du client. |
-| **Postes de charge** | Les 8 rubriques cibles : Fret, Zones éloignées, Colis volumineux, Adresses, Assurance, Droits & taxes, Plus-value BtoC, Gazole. |
-| **Colonnes `T_*`** | ~120 colonnes de détail tarifaire du CSV K&N, reclassées vers les 8 postes. |
+1. **Entrée** : fichier(s) brut(s) du transporteur (export CSV/XLSX du portail, ou facture PDF), propres au format de chaque transporteur — aucun n'a le même schéma de colonnes.
+2. **Reclassement** : chaque ligne/charge brute est reclassée dans l'un des **8 postes ERP standard** : Frêt, Zones éloignées, Colis volumineux, Adresses, Assurance, Droits et taxes, Plus-value BtoC, Taxe gazole.
+3. **Sortie** :
+   - un **classeur Excel** — clone fidèle d'un fichier de référence fait à la main pour ce transporteur (mêmes onglets, mêmes formules, mêmes tableaux croisés dynamiques) ;
+   - un **fichier d'import** (CSV + XLSX) au format standard ERP (23 colonnes), prêt à être injecté.
+4. **Réconciliation** : le total calculé est comparé au total de la facture PDF officielle du transporteur, pour détecter tout écart avant l'import.
 
----
+Le fichier d'import ERP (23 colonnes) est le **format pivot commun** à tous les transporteurs :
 
-## 3. Les données d'entrée
+`Transporteur · Date validité tarif · Réf.1 · Réf.2 · Id client · N° Tracking · Nom · E/P · Pays · Zone · Nbr Colis · Poids · Mode envoi · TVA · Droits et taxes · Assurance · Zones éloignées · Colis volumineux · Adresses · Frêt · Plus-value BtoC · Gazole · Nb Colis`
 
-| Fichier | Contenu | Format |
-|---|---|---|
-| `FcCSV#...F2606017122....csv` | **Facture principale** : 181 lignes (169 messagerie + 9 affrètement + **3 lignes de synthèse**). | latin-1, séparateur `;`, décimale `,`, 183 colonnes. |
-| `FcCSV#...F2606017123....csv` | **Facture « événements »** : 9 lignes (souffrance, présentation, correction poids, portuaire, aéroport). | idem |
-| `..._F2606017122_ORIGINAL.pdf` | Facture PDF officielle (totaux, TVA, TTC, ventilation gazole). | PDF |
-| `..._F2606017123_ORIGINAL.pdf` | Facture PDF des événements. | PDF |
-| Excel envoyé par K&N | Source de la **Taxe Gasoil**. | xlsx |
-| `2026_06_Facture Kuehne.xlsx` | **Classeur de calcul** (6 onglets : Barème gazole, Fichier Kuehne, TCD, Kuehne_Import, Bilan clients, Demande avoir). | xlsx |
-| `2026_06_Kuehne_Import.csv` | **Sortie** : fichier d'import ERP (187 lignes, 23 colonnes). | latin-1, `;`, `,` |
-| 3 fichiers `.mp4` | **Vidéos de process** (préparation import ; facture + fichier import ; **prix de vente + doublon prestation**). Sources primaires. | vidéo |
+## 3. Architecture technique
 
----
+- **Application Node.js** (interface web) : un adaptateur par transporteur, qui lit les fichiers bruts et produit le fichier d'import.
+- **Finaliseur Python** (Excel COM, sous Windows) : clone le classeur de référence du transporteur, colle les données du mois traité, recalcule les formules/tableaux croisés dynamiques natifs, produit un classeur fidèle au fichier fait à la main.
+- **Réconciliation PDF** : extraction du total officiel depuis la ou les facture(s) PDF fournies, comparaison au montant calculé.
 
-## 4. Le processus manuel actuel (ce que fait l'opérateur, A→Z)
+Chaque transporteur a son propre schéma de colonnes, ses propres pièges de format (encodage, décalage de colonnes d'un mois à l'autre, colonnes qui changent de position), et sa propre logique de reclassement — reconstituée par rétro-ingénierie du classeur fait à la main (lecture des formules réelles) puis validée empiriquement contre un ou plusieurs mois réels déjà livrés.
 
-Le classeur a 6 onglets ; le flux est **CSV bruts → onglet *Fichier Kuehne* (reclassement) → *TCD* (contrôle) → *Kuehne_Import* → fichier CSV d'import**.
+## 4. Méthodologie de reconstitution (par transporteur)
 
-### Phase A — Préparation
-1. Ouvrir le classeur du **mois précédent**, l'enregistrer sous le nouveau mois.
-2. `CTRL+MAJ+L` sur la 1ʳᵉ ligne pour vérifier qu'aucune donnée résiduelle ne subsiste.
-3. Récupérer la **Taxe Gasoil K&N** dans l'Excel fourni par K&N.
+1. **Exploration** des fichiers d'entrée bruts (CSV, XLSX, PDF) et du classeur de référence fait à la main.
+2. **Lecture du classeur** en deux passes : les valeurs (résultats) puis les formules (la logique métier réelle).
+3. **Décodage des formules** pour reconstituer la règle de reclassement colonne brute → poste ERP.
+4. **Prototype** rejouant le pipeline depuis les fichiers bruts, comparé ligne à ligne au fichier déjà livré (référence réelle).
+5. **Validation** : le nombre de lignes, les montants par poste et le total réconcilié doivent correspondre exactement (ou avec un écart documenté et expliqué) au fichier de référence.
 
-### Phase B — Collage & calcul (onglet *Fichier Kuehne*)
-4. **Coller** les données des CSV K&N.
-5. **Trier les Ref EDI de A→Z**.
-6. Vérifier le **nombre de lignes** (aucune perte).
-7. **Étendre les colonnes B→L** (formules de reclassement).
-8. Supprimer les ID clients.
+> Une règle métier n'est considérée fiable que lorsqu'elle est prouvée de deux façons indépendantes : lecture de la formule Excel **et** reproduction exacte de la sortie réelle.
 
-### Phase C — Consolidation & contrôle (onglet *TCD*)
-9. Mettre à jour le TCD (colonne S).
-10. Effacer la colonne A ; étendre T/U/V/W.
-11. **Contrôler les 2 PDF** : y saisir le **montant taxable** et comparer au calcul.
-12. Vérifier tarif PDF = tarif TCD.
+## 5. Pièges récurrents (tous transporteurs confondus)
 
-### Phase D — Import (onglet *Kuehne_Import* → fichier CSV)
-13. Vérifier le nb de lignes + étendre les colonnes (aligné sur le TCD).
-14. Changer la **date** de la 1ʳᵉ ligne.
-15. Ouvrir le fichier d'import du mois précédent, l'enregistrer sous le nouveau mois, **supprimer les anciennes données** (garder la 1ʳᵉ ligne comme trame).
+- **Encodage** : la plupart des exports transporteurs sont en latin-1, pas UTF-8.
+- **Décalage de colonnes** : certains transporteurs changent l'ordre/le nombre de colonnes d'un mois à l'autre — le reclassement doit se faire par **nom de colonne**, jamais par position fixe, sauf exception documentée (ex. UPS, export sans en-tête).
+- **Tableaux croisés dynamiques (PivotTable)** : le cache source d'un TCD cloné depuis un mois précédent reste souvent figé sur l'ancienne plage de données — doit être redirigé vers la vraie plage du mois traité à chaque génération.
+- **Items de cache obsolètes** : un TCD peut réafficher un item (catégorie, tracking) d'un mois antérieur qui n'existe plus dans les données actuelles — à purger explicitement.
+- **Poids manquant** : plusieurs transporteurs n'indiquent pas toujours le poids réel dans leur export ; un repli sur un export WMS partagé (mois courant ou précédent) est utilisé en dernier recours.
+- **E/P (Entreprise/Particulier)** : rarement fiable directement depuis l'export transporteur — résolu via le même export WMS partagé quand disponible.
+- **Lignes sans tracking ni référence** : à exclure systématiquement (lignes de synthèse, ajustements sans expédition associée) — jamais de simple filtre "montant nul" seul, le critère d'identification prime.
 
-### Phase E — Validations (check-list)
-16. Transporteur = Kuehne partout · date au bon format/mois · trackings corrects.
-17. **E/P présent partout** · **zones : pas d'étranger, pas de zone 0/inconnue** · **colis ≠ 0** · **poids ≠ 0 (1 décimale, ARRONDI.SUP sinon)** · **fret ≠ 0 €**.
-18. **Égalité des sommes par poste** entre fichier de calcul et import.
-19. **TVA** = 0,2 France/UE, 0 hors-UE.
+## 6. Les transporteurs
 
----
+Statut : tous les transporteurs listés sont opérationnels (`ready`), sauf mention contraire.
 
-## 5. La logique de transformation (le cœur — règles vérifiées)
+### Kuehne+Nagel
+- **Entrée** : 2 CSV (facture transport + facture « événements »), 2 PDF, taxe gazole lue dans un fichier Excel fourni par le transporteur.
+- **Reclassement** : ~120 colonnes de détail tarifaire regroupées en 8 postes ; granularité 1 ligne CSV = 1 ligne import (pas de regroupement par tracking).
+- **Piège clé** : les lignes de synthèse gazole ont un tracking vide — seul un tracking vide (pas le libellé de la ligne) doit servir de critère d'exclusion.
 
-### 5.1 Identifiants
-- **N° Tracking** = `Ref EDI` si non vide, **sinon** `ComRefExpedition`. (174/187 via Ref EDI, 13/187 fallback.)
-- **Réf.1** = `ComRefExpedition` (toujours).
-- ⚠️ La colonne « Ref EDI » du CSV **change de format** selon le type : `5001333` (messagerie), `EXP...` (événements), **vide** (affrètement).
+### Delivengo
+- **Entrée** : export du suivi Delivengo (.xls).
+- **Particularité** : pas de taxe gazole (frêt fixe).
 
-### 5.2 Reclassement des charges — LA règle centrale
-Chaque ligne CSV porte `Mt HT (hors frais)`, `Mt HT (avec frais)` et ~120 colonnes `T_*`. On les regroupe en **8 postes** (formules réelles des colonnes C→L de *Fichier Kuehne*) :
+### DPD
+- **Entrée** : fichiers « complément facture » (CSV/XLSX, un par facture).
+- **Piège clé** : les colonnes se décalent d'un mois à l'autre — reclassement exclusivement par nom de colonne. Repli automatique sur un export d'expéditions partagé si le poids brut est absent.
 
-| Poste ERP | = somme des colonnes CSV |
-|---|---|
-| **Droits et taxes** | `Is_Douane` + `Is_Douane_Export_ST` + `Is_Douane_Import_ST` + `T_DOUANE_ANDORRE` + `T_DOUANE_CANARIES` + `T_DOUANE_EXPORT` + `T_DOUANE_IMPORT` + `T_DOUANE_INSPECT` + `T_ATTENTE_DOUANE` + `T_IMMO_DOUANE` |
-| **Assurance** | `T_ASSUR` |
-| **Zones éloignées** | `T_ILE` + `T_LIV_SUPERMARCHE` + `T_LIV_URBAINE` + `T_LIV_AEROPORT` + `T_FERRY` + `T_LIV_PORTUAIRE` |
-| **Colis volumineux** | `T_CORR_POIDS` |
-| **Adresses** | `T_GESTION_PARTICULIER` + `T_LIV_ETAGE` + `T_SOUFFRANCE` |
-| **Plus-value B2C** | `T_EMBALLAGE` + `T_PALETTE_EUR` |
-| **Frêt** | `Mt HT (hors frais)` + **tous les autres `T_*`** (approche, admin, manutention, préavis, `T_ENERGIE`…) — c'est un **fourre-tout** |
-| **Gazole** | `Mt HT (avec frais)` − (somme des 7 postes ci-dessus) → **résidu** |
+### GLS
+- **Entrée** : export BCF (CSV), facture PDF pour réconciliation.
+- **Reclassement** : regroupement par numéro de colis, catégorie via une table de correspondance dédiée.
 
-**Propriétés vérifiées :** les 120 colonnes `T_*` forment une **partition parfaite** (20 vers les 6 postes spécifiques + 99 vers Frêt + 1 = `T_GAZOLE` isolé). Aucune colonne oubliée, aucune comptée deux fois.
-`Total hors GO` = somme des 7 postes ; `Total + GO` = les 8 = `Mt HT (avec frais)`.
+### Geodis
+- **Entrée** : facture Geodis (XLSX/CSV), PDF optionnel.
+- **Piège clé** : colonnes qui se décalent d'un mois à l'autre (même famille que DPD) — reclassement par nom de colonne uniquement.
 
-⚠️ **Piège** : des codes sémantiquement « taxe » comme `T_EKAER` (taxe routière) ou `T_MAUT` (péage allemand) tombent dans **Frêt**, pas dans Droits & taxes. Tout **nouveau** code tarifaire K&N tombera silencieusement dans Frêt.
+### Mondial Relay
+- **Entrée** : fichiers « Annexe » (CSV, un par facture/dossier), PDF pour réconciliation.
+- **Particularité** : une facture dédiée à la collecte (transport aller) génère un écart normal et documenté face au calcul par ligne.
 
-### 5.3 Le gazole
-- La colonne `T_GAZOLE` est **vide** sur toutes les lignes : le gazole n'est **pas** ventilé par expédition.
-- Il apparaît sous forme de **2 lignes de synthèse dans le CSV brut** (facture principale), identifiées par le libellé en colonne 17 « Agence Saisie/Chgt » :
-  - `TAXE SURCOUT GAZOLE MESS 1,7834 EUR/l : 11,70 %` = **1 176,27 €**
-  - `TAXE SURCOUT GAZOLE AFFR 1,7834 EUR/l : 8,43 %` = **249,11 €**
-  - (+ 1 ligne `TAXE FIXE DE FACTURATION` = 0 €)
-- Ces lignes ont un **tracking vide** → **exclues de l'import** (voir 5.4). Le gazole (**1 425,38 €**) est donc **refacturé globalement, à part** ; la colonne « Taxe Gasoil » de l'import reste **vide**.
-- Le calcul « résidu » du poste Gazole capte l'intégralité de ces montants (sur les lignes normales il vaut 0).
-- Les taux (MESS 11,70 %) proviennent du **barème gazole** (onglet dédié : prix €/l → %) ; l'affrètement (8,43 %) suit un indice distinct.
+### Lettres (Suivie / Prépa)
+- **Entrée** : export d'expéditions partagé, filtré par groupe de transporteur.
+- **Particularité** : frêt fixe par groupe, pas de taxe gazole ; les expéditions pas encore parties sont exclues.
 
-### 5.4 Granularité : 1 ligne CSV = 1 ligne import
-- L'export ERP est **1:1** avec les lignes CSV brutes — **AUCUN regroupement par tracking**. La TCD (pivot par tracking) ne sert **qu'au contrôle**.
-- **Seul filtrage** : on **exclut les lignes dont le tracking est vide** (Ref EDI ET ComRef vides) = les lignes de synthèse.
-- Identité : **190 lignes brutes − 3 sans tracking = 187 = lignes ERP** (exact).
-- ⚠️ **7 trackings apparaissent dans les 2 CSV** (principale + événements) et donnent **2 lignes ERP distinctes** : un regroupement naïf par tracking les fusionnerait et **casserait les totaux**.
+### BLS
+- **Entrée** : facture(s) PDF (source unique), export d'affrètement (CSV) pour compléter Id client/Nb colis/Poids.
+- **Particularité** : trajets internes ("navette") entre deux sites, refacturés au client avec leur montant réel.
 
-### 5.5 Zone
-`Zone = DeptExp & (Pays_dest=="FR" ? "France" : "étranger") & pad2(DeptDest)` — ex. `21France78`, `21étranger10` (BE).
-- Dept récupéré par **XLOOKUP(tracking, colonne Ref EDI, colonne Dept)**. Si le tracking vient de ComRefExpedition (Ref EDI vide, cas affrètement), le lookup **échoue → 0 → `0France00`**.
-- **Seul le dept destinataire est paddé** sur 2 chiffres ; le dept expéditeur reste brut.
-- Le **pays** provient d'une source distincte (reste correct même quand le dept tombe à 0).
-- ⚠️ **Bug latent** : les 13 lignes `0France00` partent en facturation avec une **zone tarifaire factice** (dept perdu). À corriger dans le logiciel (fallback lookup sur ComRef, ou alerte « zone inconnue »).
+### Chronopost
+- **Entrée** : 2 fichiers Excel bruts (un par sous-compte), PDF pour réconciliation.
+- **Piège clé** : la taxe gazole est facturée en lignes forfaitaires séparées, mises en pool par facture puis redistribuées au prorata du frêt sur les lignes normales.
 
-### 5.6 Champs fixes (K&N)
-`Transporteur=KUEHNE` · `E/P=E` · `mode envoi=ST` · `Date validité tarif = 1er du mois` (187/187, aucune exception).
-`TVA = 0,2` France/UE (Belgique incluse) / `0,0` hors-UE (US, GB, CH…). La branche hors-UE est **documentée mais non exercée** en juin 2026.
-`Poids` = colonne **Poids** (jamais Poids taxable). `Nbr Colis` = colonne **Nb colis**.
+### Colissimo
+- **Entrée** : 2 CSV (prestations au colis + frais de douane), PDF, fichier d'import du mois précédent (optionnel, pour compléter les charges de douane isolées).
+- **Particularité** : la taxe gazole est déjà calculée et fournie directement par le transporteur dans le CSV brut.
 
-### 5.7 Réconciliation — l'équation maîtresse
-```
-Total hors gazole (13 335,88)  +  Gazole (1 425,38)  =  14 761,26 €
-        ▲ (= import ERP)              ▲ (= 1176,27 + 249,11)
-   = Facture F2606017122 (14 433,99, taxable)  +  Facture F2606017123 (327,27)
-```
-TVA 20 % et TTC : 17 320,79 € (F...122) + 392,72 € (F...123).
+### TNT
+- **Entrée** : 1 fichier Excel brut (feuille détail facture), PDF pour réconciliation.
+- **Piège clé** : une ligne d'événement peut porter le montant de transport réel de tout un envoi regroupant plusieurs colis — attribution au tracking correct nécessaire.
 
-### 5.8 Les « événements » (2e facture) — illustration du reclassement
-| Événement PDF | Colonne `T_*` | Poste ERP |
-|---|---|---|
-| SOUFFRANCE (77,10) | `T_SOUFFRANCE` | Adresses |
-| CORRECTION_POIDS (30,00) | `T_CORR_POIDS` | Colis volumineux |
-| LIVRAISON_PORTUAIRE (21,00) | `T_LIV_PORTUAIRE` | Zones éloignées |
-| LIVRAISON_AEROPORT (21,00) | `T_LIV_AEROPORT` | Zones éloignées |
-| PRESENTATION (178,17) | (T_* de type manutention) | **Frêt** (fourre-tout) |
+### FedEx
+- **Entrée** : 1 CSV brut par mois (export portail), PDF pour réconciliation.
+- **Particularité** : plusieurs suppléments (zones éloignées, colis volumineux) n'apparaissent que dans le texte des PDF, pas dans le CSV — extraits par recherche de mots-clés.
 
----
+### UPS
+- **Entrée** : CSV « Billing » (un par facture, sans en-tête — colonnes résolues par position, cas particulier parmi les transporteurs).
+- **Particularité** : deux comptes distincts (standard et contre-remboursement) déterminés depuis le tracking. Les colis retournés à l'expéditeur (préfixe de tracking dédié) restent visibles dans le classeur mais sont exclus du fichier d'import et reportés automatiquement dans un onglet dédié aux demandes d'avoir. Les lignes sans aucune charge facturable sont supprimées.
 
-## 6. Méthodologie — les manipulations d'investigation (reverse-engineering)
+## 7. Limites connues du projet
 
-1. **Exploration** du dossier (`ls`) : repérage des CSV, PDF, xlsx, docx, mp4.
-2. **Extraction des .docx** : un `.docx` est un zip → `unzip -p fichier.docx word/document.xml` puis suppression des balises XML → texte du process.
-3. **Lecture du .xlsx** avec `openpyxl`, en **deux passes** :
-   - `data_only=True` → les **valeurs** (résultats).
-   - `data_only=False` → les **formules** (la logique métier réelle).
-4. **Décodage des formules** : mapping colonne Excel → colonne CSV via l'offset (colonne M d'Excel = colonne 1 du CSV) pour reconstituer les 8 postes.
-5. **Analyse des pivots** : lecture des `pivotCacheDefinition` (source du TCD = *Fichier Kuehne* ; source de *Bilan clients* = TCD).
-6. **Parsing des CSV** : attention **encodage latin-1**, séparateur `;`, décimale `,`.
-7. **Parsing des PDF** avec `pypdf` → totaux officiels, TVA, ventilation gazole.
-8. **Prototype Python** rejouant tout le pipeline depuis les CSV bruts → comparaison **multiset** avec l'export ERP réel : **187/187 lignes identiques, 0 écart**.
-9. **Vérification adversariale multi-agents** (workflow) : 4 agents ré-dérivent chacun une facette pour tenter de casser les règles, 1 extrait le process manuel, 1 critique la complétude. Double preuve : lecture des formules **+** validation empirique contre la sortie réelle.
-
-> Leçon de méthode : on prouve une règle métier de **deux façons indépendantes** (lire la formule *et* reproduire la sortie réelle). Quand les deux concordent, la confiance est maximale.
-
----
-
-## 7. Chiffres de contrôle (juin 2026)
-
-| Poste | Montant (€) |
-|---|---|
-| Frêt | 13 137,78 |
-| Adresses | 77,10 |
-| Zones éloignées | 91,00 |
-| Colis volumineux | 30,00 |
-| Assurance / Droits & taxes / Plus-value B2C | 0,00 |
-| **Sous-total import (hors gazole)** | **13 335,88** |
-| Gazole (hors import) | 1 425,38 |
-| **TOTAL HT** | **14 761,26** |
-
-187 lignes d'import · 180 trackings uniques + 7 en doublon · 46 zones distinctes (top `21France34`).
-
----
-
-## 8. Pièges à éviter pour l'automatisation
-
-- **Encodage** : lire en latin-1 (pas UTF-8) ; **mapper les colonnes par INDEX**, pas par libellé (accents cassés + espaces de garde ` Zone `).
-- **Décimale** : `,` → `.` au parsing, et `.` → `,` à l'écriture de l'import.
-- **Exclure les lignes à tracking vide** (sinon +3 lignes et **faux gazole de 1 425,38 €**). Critère = « tracking vide », PAS « ligne gazole ».
-- **Ne jamais regrouper/dédupliquer par tracking** (fusionnerait les 7 paires inter-fichiers).
-- **Zone `0France00`** = lookup échoué → prévoir fallback/alerte.
-- **Padding** : seul le dept destinataire est paddé sur 2 chiffres.
-- **Nouveau code `T_*`** → tombe dans Frêt : prévoir une alerte sur codes inconnus.
-- **Poids** (pas Poids taxable) ; interdits : poids 0, colis 0, fret 0 €.
-- **Colonne « Taxe Gasoil » de l'import doit rester VIDE** ; colonne « Nb colis » (22) vide, « Nbr Colis » (10) remplie.
-- **Arrondi TVA** au centime.
-- **TVA hors-UE (0)** jamais testée en juin 2026 → à valider sur un mois avec US/GB/CH.
-
----
-
-## 9. Zones d'ombre à éclaircir (prochaines investigations)
-
-1. **Refacturation vente & marge** : grille de vente par zone, lien achat→vente (le « pourquoi » final). → **vidéo « Prix de vente - Doublon prestation »**.
-2. **Mécanisme concret de refacturation du gazole** (ligne globale ? prorata du fret ?).
-3. **Origine de l'ID client** (supprimé de l'import) et comment la refacturation retrouve le client (via tracking / Bilan clients).
-4. **Barème gazole** : indice de référence, pourquoi MESS ≠ AFFR.
-5. **Dérivation E/P** (forcé à E pour K&N ? depuis le nom ? un flag ?).
-6. **Règle 1Z79** (colis à sortir de l'import → demande d'avoir) — spécifique UPS, non testée ici.
-7. **Spec normative des 23 colonnes** de l'import attendue par l'ERP.
-8. **Contradiction « pas d'étranger » vs ligne Belgique (UE)** : étranger UE toléré, hors-UE interdit ?
-
----
-
-## 10. Prochaines étapes logicielles
-
-1. Durcir le module K&N (moteur de validation + file d'exceptions).
-2. Externaliser la table de reclassement en **config par transporteur** (YAML) et valider sur un 2ᵉ transporteur (UPS/Geodis).
-3. Traiter les 2 maillons manuels : parsing PDF (totaux/gazole) et attribution client.
+- Chaque transporteur a été validé sur un ou plusieurs mois réels, avec un niveau de confiance variable (validation humaine par l'équipe métier vs. comparaison automatique exhaustive contre un fichier déjà livré).
+- Certains écarts résiduels mineurs, déjà investigués et documentés, restent volontairement non corrigés lorsqu'ils sont jugés non significatifs (montant négligeable, cas isolé).
+- L'application traite un mois à la fois, en local — pas encore d'environnement de production partagé (API/base de données/déploiement centralisé).
