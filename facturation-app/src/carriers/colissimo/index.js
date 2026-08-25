@@ -76,6 +76,38 @@ function deduireCategorieParMotsCles(codeCharge, description) {
   return null;
 }
 
+// Retour pole transport 2026-08-20 ("M L J I a recup du fichier import m-1 si que droits et
+// taxes, le mettre dans l'entree des le debut") : quand un tracking n'a QUE une charge de
+// douane isolee ce mois-ci (aucune ligne de vrai transport, cf. trackingsAvecTransport), les
+// colonnes Pays(I)/Zone(J)/Poids(L)/Mode envoi(M) restent vides -- desormais completees
+// automatiquement depuis le fichier Import CSV du MOIS PRECEDENT (meme tracking), fourni en
+// entree optionnelle par l'utilisateur (pas de convention de nommage previsible pour ce
+// fichier, contrairement a l'export brut WMS m/m-1).
+function lireImportM1(path) {
+  const { readCsv } = require('../../core/csv');
+  const { header, rows } = readCsv(path, ';', 'latin1');
+  const norm = (h) => String(h || '').replace(/\s+/g, ' ').trim();
+  const headerNorm = header.map(norm);
+  const iTracking = headerNorm.indexOf('N° Tracking');
+  const iPays = headerNorm.indexOf('Pays');
+  const iZone = headerNorm.indexOf('Zone');
+  const iPoids = headerNorm.indexOf('Poids');
+  const iMode = headerNorm.indexOf('mode envoi');
+  const map = new Map();
+  if (iTracking < 0) return map;
+  for (const r of rows) {
+    const tracking = String(r[iTracking] || '').trim();
+    if (!tracking || map.has(tracking)) continue;
+    map.set(tracking, {
+      pays: iPays >= 0 ? String(r[iPays] || '').trim() : '',
+      zone: iZone >= 0 ? String(r[iZone] || '').trim() : '',
+      poids: iPoids >= 0 ? num(r[iPoids]) : 0,
+      mode: iMode >= 0 ? String(r[iMode] || '').trim() : '',
+    });
+  }
+  return map;
+}
+
 async function process(files) {
   const prestaPaths = files.presta || [];
   const douanePaths = files.douane || [];
@@ -83,6 +115,10 @@ async function process(files) {
 
   const warnings = [];
   const infos = [];
+
+  const importM1Paths = files.importM1 || [];
+  const m1Map = importM1Paths.length ? lireImportM1(importM1Paths[0]) : new Map();
+  if (importM1Paths.length && !m1Map.size) warnings.push(`Fichier import m-1 fourni mais aucune ligne exploitable trouvée (en-têtes attendus : N° Tracking/Pays/Zone/Poids/mode envoi).`);
 
   // Colonnes H a N COMMUNES aux 2 CSV (N de ligne, N facture, Date, Compte facture,
   // Compte deposant, Description, Produit) ; N colis, Pays Origine/Destination, Poids Kg
@@ -108,6 +144,13 @@ async function process(files) {
     const iTotalHt = colIdx(header, 'Total HT');
     const iTauxTva = colIdx(header, 'Taux TVA');
     const iCodeCharge = colIdx(header, 'Code charge');
+    // Ref.1 (retour pole transport 2026-08-20, "fichier import csv : ref 1 a remplir") :
+    // colonne "Reference externe colis client" du CSV brut "Prestations au colis" -- formule
+    // modele exacte 'Import CSV'!C = XLOOKUP(tracking,'Facture Colissimo'!O:O,'Facture
+    // Colissimo'!U:U) -- U = "Reference externe colis client" (col 21 du classeur = index 13
+    // du CSV brut, confirme present dans le fichier reel). Absente des lignes "Frais de
+    // douane" (meme famille que Pays Origine/Destination).
+    const iRefExterne = colIdx(header, 'Référence externe colis client');
     if (iNColis < 0 || iTotalHt < 0 || iCodeCharge < 0) {
       warnings.push(`${path.split(/[\\/]/).pop()} : colonne(s) attendue(s) introuvable(s) (N colis/Total HT/Code charge) — fichier ignoré.`);
       return;
@@ -128,6 +171,7 @@ async function process(files) {
         // (confirme : ces colonnes restent vides, cf. docstring en tete de fichier) --
         // paysDestination reste '' pour ces lignes, XLOOKUP renverra "" (comme le modele).
         paysDestination: iPaysDestination >= 0 ? String(r[iPaysDestination] || '').trim() : '',
+        refExterne: iRefExterne >= 0 ? String(r[iRefExterne] || '').trim() : '',
         // Nature du poids facture = "M" (Massique, majoritaire) OU "V" (Volumetrique, 41
         // lignes/juin 2026) -- les deux portent un vrai poids exploitable sur la ligne
         // "Charge <prefixe>". BUG TROUVE 2026-08-14 : filtrer sur "M" seul faisait rater
@@ -220,7 +264,7 @@ async function process(files) {
 
     recs.push({
       numeroFacture: l.numeroFacture, tracking: l.nColis, comref: l.numeroFacture, dest: '',
-      produit: l.produit, pays: paysIso || 'Pays à créer', zone, mode,
+      produit: l.produit, pays: paysIso || 'Pays à créer', zone, mode, refExterne: l.refExterne,
       poids: l.poidsKg || 0, poidsKg: l.poidsKg, colis: 1,
       totalHt: l.totalHt, tauxTva: l.tauxTva, categorie: categorie || null, codeCharge: l.codeCharge,
       postes: postesLigne, horsGo: round2(l.totalHt), avecGo: round2(l.totalHt),
@@ -249,6 +293,9 @@ async function process(files) {
   let totalGazoleCalcule = 0;
   for (const [tracking, groupe] of groupes) {
     const base = groupe.find((r) => r.poidsKg != null) || groupe[0];
+    // Ref.1 : premiere valeur non vide trouvee dans le groupe (reproduit XLOOKUP -- 1re
+    // correspondance sur le tracking, cf. formule modele en tete de fichier).
+    const refExterne = groupe.find((r) => r.refExterne)?.refExterne || '';
     const postes = Object.fromEntries(POSTE_KEYS.map((k) => [k, 0]));
     for (const r of groupe) {
       if (r.categorie && POSTE_KEYS.includes(r.categorie)) postes[r.categorie] = round2(postes[r.categorie] + r.totalHt);
@@ -256,16 +303,27 @@ async function process(files) {
     const tauxTvaRef = groupe.find((r) => r.tauxTva)?.tauxTva ?? 0;
     totalGazoleCalcule = round2(totalGazoleCalcule + (postes['Taxe gazole'] || 0));
 
+    // Repli mois precedent (M/L/J/I) : uniquement si CE tracking n'a AUCUNE ligne de vrai
+    // transport ce mois-ci (que du "Droits et taxes" isole, cf. trackingsAvecTransport) --
+    // meme condition deja utilisee pour les warnings "zone inconnue"/"pays absent" existants.
+    const sansTransport = !trackingsAvecTransport.has(tracking);
+    const m1 = sansTransport ? m1Map.get(tracking) : null;
+    if (sansTransport && m1Map.size && !m1) {
+      warnings.push(`Colis ${tracking} : charge de douane isolée, tracking absent du fichier import m-1 fourni — Pays/Zone/Poids/mode envoi restent à compléter à la main.`);
+    } else if (m1) {
+      infos.push(`Colis ${tracking} : Pays/Zone/Poids/mode envoi récupérés automatiquement depuis le fichier import m-1 (charge de douane isolée, sans ligne de transport ce mois-ci).`);
+    }
+
     importRows.push({
       Transporteur: 'COLISSIMO',
       DateValidite: dateValidite || '',
       // Id client : TOUJOURS vide dans le fichier import (decision utilisateur 2026-08-12,
       // s'applique a tous les transporteurs).
-      Ref1: '', Ref2: '', IdClient: '',
+      Ref1: refExterne, Ref2: '', IdClient: '',
       Tracking: base.tracking, Nom: '',
-      EP: 'P', Pays: base.pays, Zone: base.zone,
-      NbrColis: 1, Poids: base.poidsKg != null ? roundUp1(base.poidsKg) : 0,
-      Mode: base.mode, TVA: tvaPourTaux(tauxTvaRef),
+      EP: 'P', Pays: m1 ? m1.pays : base.pays, Zone: m1 ? m1.zone : base.zone,
+      NbrColis: 1, Poids: m1 ? roundUp1(m1.poids) : (base.poidsKg != null ? roundUp1(base.poidsKg) : 0),
+      Mode: m1 ? m1.mode : base.mode, TVA: tvaPourTaux(tauxTvaRef),
       DroitsTaxes: postes['Droits et taxes'] || null,
       Assurance: postes.Assurance || null,
       ZonesEloignees: postes['Zones éloignées'] || null,
@@ -352,8 +410,13 @@ module.exports = {
     { key: 'presta', label: "CSV 'Prestations au colis'", accept: '.csv', multiple: true, required: true },
     { key: 'douane', label: "CSV 'Frais de douane'", accept: '.csv', multiple: true, required: false },
     { key: 'pdf', label: 'Facture(s) PDF Colissimo (contrôle du total)', accept: '.pdf', multiple: true, required: false },
+    { key: 'importM1', label: 'Fichier import CSV du mois précédent (Pays/Zone/Poids/mode envoi pour charges de douane isolées)', accept: '.csv', multiple: false, required: false },
   ],
   outputNaming: { workbook: '{period}_Facture Colissimo', import: '{period}_Colissimo_Import' },
+  // Le fichier import CSV/XLSX est reconstruit depuis les valeurs REELLEMENT calculees par
+  // Excel dans l'onglet "Import CSV" du classeur genere (au lieu des importRows calcules a
+  // part en JS) -- remontee pole transport 2026-08-24, cf. server.js et finaliser_colissimo.py.
+  importFromWorkbook: true,
   finalizer: {
     script: '../automatisation/finaliser_colissimo.py',
     template: '../Transporteurs/Colissimo/2026_06_Facture Colissimo.xlsx',

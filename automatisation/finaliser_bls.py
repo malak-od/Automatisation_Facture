@@ -283,8 +283,9 @@ def main():
     print(f"Entrée : {len(factures)} facture(s), {len(all_items)} ligne(s) 'Dossier'")
 
     # "Factures BLS"/"Import CSV" : lignes a montant 0 retirees (rien a facturer nulle part,
-    # confirme = montant reellement nul -- cf. docstring), navette CONSERVEE (visible, cout
-    # reel paye a BLS meme si non refacturee -- decision utilisateur 2026-08-12).
+    # confirme = montant reellement nul -- cf. docstring), navette CONSERVEE et REFACTURABLE
+    # au client (montant reel paye a BLS -- decision utilisateur 2026-08-24, remplace la regle
+    # "Fret=0 pour navette" du 2026-08-12).
     items = [it for it in all_items if it["montant"] != 0]
     n_montant_nul = len(all_items) - len(items)
     if n_montant_nul:
@@ -292,7 +293,7 @@ def main():
     n_navette = sum(1 for it in items if it["is_navette"])
     if n_navette:
         montant_navette = round(sum(it["montant"] for it in items if it["is_navette"]), 2)
-        print(f"{n_navette} ligne(s) navette ({montant_navette} EUR payés à BLS) : Frêt=0 dans Import CSV, Poids=13200 (forfaitaire).")
+        print(f"{n_navette} ligne(s) navette ({montant_navette} EUR payés à BLS) : Frêt refacturé au client (montant réel), Poids=13200 (forfaitaire).")
 
     affretement_map = {}
     for p in affretement_paths:
@@ -427,13 +428,10 @@ def main():
                     poids = aff["poids"] if aff else None
                 kl_data.append([nb_colis, poids])
             retry(lambda: wsImp.Range(wsImp.Cells(2, 11), wsImp.Cells(1 + len(kl_data), 12)).__setattr__("Value", kl_data))
-        # T (Frêt) : formule ='Factures BLS'!J{n} (montant REEL, y compris navette, cf. la
-        # feuille "Factures BLS" ci-dessus) -> pour les lignes navette, PAS refacturables au
-        # client, on fige la valeur a 0 APRES le FillDown (meme mecanisme que M/W chez
-        # Delivengo : geler une formule en valeur pour la remplacer).
-        navette_rows = [i + 2 for i, it in enumerate(items) if it["is_navette"]]
-        for r in navette_rows:
-            retry(lambda r=r: setattr(wsImp.Cells(r, 20), "Value", 0))
+        # T (Frêt) : formule ='Factures BLS'!J{n} (montant REEL, y compris navette) -> navette
+        # REFACTURABLE au client depuis le 2026-08-24 (decision utilisateur, remplace la regle
+        # "Fret=0 pour navette" du 2026-08-12, remontee pole transport : "etendre formule Fret,
+        # ne pas supprimer pour navette") -- la formule FillDown suffit, plus de gel a 0.
 
         # 3) "Bilan PDF"/"Bilan client" : TCD dont le PivotCache pointe deja une plage OUVERTE
         #    ('Factures BLS'!B1:K1048576 / A1:K1048576 -- confirme sur le modele, contrairement

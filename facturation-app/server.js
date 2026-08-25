@@ -9,7 +9,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const execFileAsync = require('util').promisify(execFile);
 const registry = require('./src/registry');
-const { writeImportCsv, writeImportXlsx, writeWorkbook } = require('./src/core/excelOut');
+const { writeImportCsv, writeImportXlsx, writeWorkbook, readImportRowsFromValuesCsv } = require('./src/core/excelOut');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000; // Number() : sinon "4000"+1 = "40001" (concat de chaîne)
@@ -64,8 +64,16 @@ app.post('/api/process', upload.any(), async (req, res) => {
     const files = {};
     for (const f of req.files || []) (files[f.fieldname] = files[f.fieldname] || []).push(f.path);
 
-    const result = await carrier.process(files);
-    const period = result.period || 'export';
+    // Mois choisi dans l'UI = source de verite si fourni (decision utilisateur 2026-08-20,
+    // corrige le bug UPS "date validite decale un mois" -- l'auto-detection par carrier reste
+    // le repli si le champ n'est pas envoye). Le select envoie "AAAA_MM" (meme format que
+    // result.period) ; on passe aussi la variante sans underscore "AAAAMM" (format interne
+    // moisCible d'UPS) pour eviter que chaque carrier ne refasse la conversion.
+    const periodRaw = String(req.body.period || '');
+    const periodMatch = /^(\d{4})_(\d{2})$/.exec(periodRaw);
+    const periodOverride = periodMatch ? { formatted: periodRaw, compact: `${periodMatch[1]}${periodMatch[2]}` } : null;
+    const result = await carrier.process(files, { period: periodOverride });
+    const period = (periodOverride && periodOverride.formatted) || result.period || 'export';
     const suffix = 'test'; // suffixe figé (différencie du fichier fait à la main)
     const workbookOnly = !!carrier.workbookOnly; // ex. Delivengo : le classeur EST l'import
     const posteKeys = result.posteKeys || [];
@@ -81,33 +89,15 @@ app.post('/api/process', upload.any(), async (req, res) => {
     const dir = path.join(OUTPUTS, stamp);
     fs.mkdirSync(dir, { recursive: true });
 
-    // 1) Import ERP valeurs seules (CSV + XLSX) — sauf transporteurs "classeur seul"
-    // multiImports : transporteurs a plusieurs fichiers import distincts (ex. Lettres :
-    // Suivie / Prepa / SLAACE, fidele aux 3 fichiers du process reel).
-    const multiDownloads = [];
-    if (!workbookOnly && result.multiImports) {
-      for (const m of result.multiImports) {
-        const csvName = `${period}_${m.name}_Import_${suffix}.csv`;
-        const xlsxName = `${period}_${m.name}_Import_${suffix}.xlsx`;
-        writeImportCsv(m.importRows, path.join(dir, csvName));
-        await writeImportXlsx(m.importRows, path.join(dir, xlsxName), m.sheetName || m.name);
-        multiDownloads.push({
-          key: m.key, name: m.name, lignes: m.lignes,
-          csv: { url: `/outputs/${stamp}/${encodeURIComponent(csvName)}`, name: csvName },
-          xlsx: { url: `/outputs/${stamp}/${encodeURIComponent(xlsxName)}`, name: xlsxName },
-        });
-      }
-    } else if (!workbookOnly && impXlsxName) {
-      writeImportCsv(result.importRows, path.join(dir, impCsvName));
-      await writeImportXlsx(result.importRows, path.join(dir, impXlsxName), (result.sheetNames || {}).import || `${carrier.name}_Import`);
-    }
-
     // 2) Classeur = CLONE FIDELE du fichier fait a la main (Excel COM/Python) ; repli exceljs.
     // noWorkbook : transporteurs sans classeur de reference (ex. Lettres, 3 imports
     // separes calcules en JS pur) -> writeWorkbook() attend une structure recs/rows
     // absente ici, pas la peine de produire un classeur casse/vide.
     const wbPath = path.join(dir, wbName);
     let workbookMode = 'exceljs';
+    // Rempli si le finaliseur a exporte les valeurs calculees de son onglet Import (cf.
+    // carrier.importFromWorkbook ci-dessous) -- reste null pour tous les autres carriers.
+    let importValuesCsvPath = null;
     if (carrier.noWorkbook) {
       workbookMode = 'none';
     } else if (result.prebuiltWorkbookPath && fs.existsSync(result.prebuiltWorkbookPath)) {
@@ -136,6 +126,8 @@ app.post('/api/process', upload.any(), async (req, res) => {
           if (mPays) (result.warnings = result.warnings || []).push(`Pays ajouté automatiquement à la table "Pays" : ${mPays[1].trim()}`);
           const mMode = line.match(/^AJOUT_MODE_ENVOI_AUTO:(.+)$/);
           if (mMode) (result.warnings = result.warnings || []).push(`Mode d'envoi déduit automatiquement (à vérifier) : ${mMode[1].trim()}`);
+          const mExport = line.match(/^EXPORT_IMPORT_VALEURS:(.+)$/);
+          if (mExport) importValuesCsvPath = mExport[1].trim();
         }
       } catch (e) {
         console.warn('Finaliseur Excel KO :', String(e.stderr || e.message || '').slice(0, 300));
@@ -146,6 +138,41 @@ app.post('/api/process', upload.any(), async (req, res) => {
       }
     } else {
       await writeWorkbook({ ...result, pdfs: result.pdfs || null }, wbPath);
+    }
+
+    // 1) Import ERP valeurs seules (CSV + XLSX) — sauf transporteurs "classeur seul". Genere
+    // APRES le classeur (et non avant, cf. ordre historique) car carrier.importFromWorkbook
+    // (Colissimo/Fedex) relit les valeurs REELLEMENT calculees par Excel dans le classeur tout
+    // juste genere -- remontee pole transport 2026-08-24 : "le fichier import CSV de quelques
+    // transporteurs deconne alors que la feuille Import CSV du fichier de facture est correcte
+    // -> copier-coller depuis le fichier de la facture, coller en valeur". Repli sur
+    // result.importRows (calcule en JS, comme avant) si le fichier de valeurs est absent
+    // (finaliseur en echec, ou carrier sans ce flag).
+    // multiImports : transporteurs a plusieurs fichiers import distincts (ex. Lettres :
+    // Suivie / Prepa / SLAACE, fidele aux 3 fichiers du process reel) -- jamais combine avec
+    // importFromWorkbook a ce jour.
+    const multiDownloads = [];
+    if (!workbookOnly && result.multiImports) {
+      for (const m of result.multiImports) {
+        const csvName = `${period}_${m.name}_Import_${suffix}.csv`;
+        const xlsxName = `${period}_${m.name}_Import_${suffix}.xlsx`;
+        writeImportCsv(m.importRows, path.join(dir, csvName));
+        await writeImportXlsx(m.importRows, path.join(dir, xlsxName), m.sheetName || m.name);
+        multiDownloads.push({
+          key: m.key, name: m.name, lignes: m.lignes,
+          csv: { url: `/outputs/${stamp}/${encodeURIComponent(csvName)}`, name: csvName },
+          xlsx: { url: `/outputs/${stamp}/${encodeURIComponent(xlsxName)}`, name: xlsxName },
+        });
+      }
+    } else if (!workbookOnly && impXlsxName) {
+      let rowsForImport = result.importRows;
+      if (carrier.importFromWorkbook && importValuesCsvPath) {
+        const fromWorkbook = readImportRowsFromValuesCsv(importValuesCsvPath);
+        if (fromWorkbook && fromWorkbook.length) rowsForImport = fromWorkbook;
+        try { fs.unlinkSync(importValuesCsvPath); } catch (e) { /* ignore */ }
+      }
+      writeImportCsv(rowsForImport, path.join(dir, impCsvName));
+      await writeImportXlsx(rowsForImport, path.join(dir, impXlsxName), (result.sheetNames || {}).import || `${carrier.name}_Import`);
     }
 
     const link = (name) => ({ url: `/outputs/${stamp}/${encodeURIComponent(name)}`, name });

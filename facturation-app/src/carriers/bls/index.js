@@ -327,16 +327,19 @@ async function process(files) {
       Mode: cfg.champs_fixes.Mode, TVA: cfg.champs_fixes.tva,
       DroitsTaxes: 0, Assurance: 0,
       ZonesEloignees: 0, ColisVolumineux: 0, Adresses: 0,
-      // Navette : PAS refacturable au client -> Fret=0 dans l'import, meme si un montant
-      // reel a ete paye a BLS (rec.montantHt, garde pour la reconciliation PDF ci-dessous).
-      Fret: rec.isNavette ? 0 : rec.montantHt, PlusValueB2C: 0, TaxeGasoil: '', NbColis: '',
+      // Navette : REFACTURABLE au client -> Fret = montant reel paye a BLS, meme regle que
+      // les autres lignes (decision utilisateur 2026-08-24, remplace la regle "Fret=0 pour
+      // navette" du 2026-08-12 -- remontee pole transport : "etendre formule Fret, ne pas
+      // supprimer pour navette").
+      Fret: rec.montantHt, PlusValueB2C: 0, TaxeGasoil: '', NbColis: '',
       _isNavette: rec.isNavette, // interne, retire avant retour -- exclu de validate() ci-dessous
     };
   });
 
-  // Navette : COLIS=0/FRET=0 sont des consequences ATTENDUES de la regle ci-dessus (deja
-  // expliquees en infos), pas de vraies anomalies -> exclues de validate() pour ne pas
-  // generer 2 alertes de bruit par ligne navette (COLIS=0 + FRET=0).
+  // Navette : NbrColis/Poids forfaitaires (pas une vraie mesure/jointure AffreTrans) restent
+  // des cas particuliers attendus, pas de vraies anomalies -> exclues de validate() pour ne
+  // pas generer d'alerte de bruit sur ces 2 champs (Fret, lui, est un vrai montant depuis le
+  // 2026-08-24 et n'a plus besoin de cette exclusion, mais on garde le meme filtre par simplicite).
   const { alerts, infos: valInfos } = validate(importRows.filter((o) => !o._isNavette));
   for (const o of importRows) delete o._isNavette;
   infos.push(...valInfos);
@@ -345,7 +348,7 @@ async function process(files) {
   infos.push(`Export affrètement : "Id client"/"Nbr Colis"/"Poids" complétés pour ${nbAffretementTrouve}/${nbHorsNavette} ligne(s) (jointure sur "Récépissé" = "Dossier", hors navette).`);
   if (nbSansAffretement) infos.push(`${nbSansAffretement} ligne(s) sans correspondance dans l'export affrètement — "Id client"/"Nbr Colis"/"Poids" à compléter manuellement.`);
   if (nbLignesSansMontantSupprimees) infos.push(`${nbLignesSansMontantSupprimees} ligne(s) supprimée(s) (Poids et Frêt tous à 0 — rien à facturer sur cette ligne).`);
-  if (nbNavetteExclues) infos.push(`${nbNavetteExclues} ligne(s) "navette" (trajet interne, non refacturable au client, ${montantNavetteExclu.toFixed(2)} EUR payés à BLS) — Frêt=0 dans l'import ERP, Poids=${POIDS_NAVETTE_DEFAUT} (forfaitaire).`);
+  if (nbNavetteExclues) infos.push(`${nbNavetteExclues} ligne(s) "navette" (trajet interne, ${montantNavetteExclu.toFixed(2)} EUR payés à BLS) — Frêt refacturé au client (montant réel), Poids=${POIDS_NAVETTE_DEFAUT} (forfaitaire).`);
 
   // Reconciliation : Total HT officiel (extrait du PDF, bloc de synthese) compare au total
   // calcule (somme des montants par ligne "Dossier") -- meme fichier, meme source, donc
@@ -364,10 +367,9 @@ async function process(files) {
     infos.push(`Facture PDF ${f.file} (${f.nFacture}) : Total HT = ${f.totalHt.toFixed(2)} EUR, calculé = ${calcule.toFixed(2)} EUR (écart ${ecart >= 0 ? '+' : ''}${ecart.toFixed(2)} EUR -> ${statut})`);
   }
 
-  // controle (total affiche a l'ecran) = total FACTURABLE au client, base sur importRows
-  // (Fret=0 pour les lignes navette, deja integre ci-dessus) -- distinct du total
-  // reconcilie avec le PDF ci-dessus, qui lui inclut la navette (montant reellement paye
-  // au transporteur, rec.montantHt).
+  // controle (total affiche a l'ecran) = total FACTURABLE au client, base sur importRows --
+  // navette incluse avec son montant reel depuis le 2026-08-24, donc coherent avec le total
+  // reconcilie PDF ci-dessus (rec.montantHt, meme valeur).
   const controle = { Fret: round2(importRows.reduce((s, r) => s + (r.Fret || 0), 0)) };
 
   return {

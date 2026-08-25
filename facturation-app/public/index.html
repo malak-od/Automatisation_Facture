@@ -330,6 +330,10 @@ async function run(e) {
     if (inp.multiple) for (const f of (pickedFiles[inp.key] || [])) fd.append(inp.key, f);
   }
   fd.append('carrier', current.id);
+  // Mois choisi = source de verite pour la periode (decision utilisateur 2026-08-20, remplace
+  // l'ancien comportement "informatif uniquement" du 2026-08-14) -- prioritaire sur la
+  // detection auto de chaque carrier depuis ses documents, cf. server.js.
+  if (monthChosen) fd.append('period', monthChosen);
   const r = document.getElementById('result');
   r.innerHTML = '<p class="spinner">Calcul en cours…</p>';
   try {
@@ -344,8 +348,9 @@ async function run(e) {
 
 function renderResult(d, monthChosen) {
   const totaux = d.totaux || {};
-  // Mois choisi purement informatif (pas transmis au serveur) : la vraie periode calculee
-  // depuis les documents fait foi -- simple alerte visuelle en cas d'ecart, pas un blocage.
+  // Mois choisi = source de verite, transmis au serveur (decision 2026-08-20). Un ecart ici
+  // signifie que le carrier n'a pas pu utiliser la periode fournie (repli sur sa propre
+  // detection, cf. server.js) -- reste une alerte visuelle, pas un blocage.
   const monthMismatch = monthChosen && d.periode && monthChosen !== d.periode;
   const hasTotals = Object.keys(totaux).length > 0;
   const rows = Object.entries(totaux).map(([k,v])=>`<tr><td>${k}</td><td class="n">${v.toFixed(2)}</td></tr>`).join('');

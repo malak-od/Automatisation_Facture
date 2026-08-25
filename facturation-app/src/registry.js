@@ -17,6 +17,8 @@ const bls = require('./carriers/bls');
 const chronopost = require('./carriers/chronopost');
 const colissimo = require('./carriers/colissimo');
 const tnt = require('./carriers/tnt');
+const fedex = require('./carriers/fedex');
+const ups = require('./carriers/ups');
 
 function planned(meta) {
   return {
@@ -31,16 +33,9 @@ function planned(meta) {
 
 // Transporteurs planifies (source : FACTURATION EXCEL.docx / Notes.docx / Check.docx)
 const PLANNED = [
-  { id: 'ups', name: 'UPS', viticolis: true, taxeGasoil: 'Filles Viticolis',
-    method: "Telecharger les factures du Billing (sauf 0EUR et notes de credit, filtrer le compte 80X7Y5), CSV, trier trackings, reclasser. E/P via export brut m/m-1/m-2. Colis 1Z79 -> demande d'avoir.",
-    inputs: [{ key: 'csv', label: 'Factures Billing UPS (CSV/Excel)', accept: '.csv,.xlsx', multiple: true, required: true }] },
-  { id: 'fedex', name: 'FedEx', taxeGasoil: 'Facture PDF (TG France/International)',
-    method: "Ouvrir CSV shipment detail, remplacer . par ,, E/P via export brut m/m-1, verifier FICP (IE/RE), MAJ TCD, gerer droits & taxes.",
-    inputs: [{ key: 'csv', label: 'Shipment detail (CSV)', accept: '.csv', multiple: true, required: true },
-             { key: 'pdf', label: 'Facture PDF', accept: '.pdf', multiple: true, required: false }] },
 ];
 
-const carriers = [kuehne, delivengo, dpd, gls, geodis, mondialRelay, lettres, bls, chronopost, colissimo, tnt, ...PLANNED.map(planned)];
+const carriers = [kuehne, delivengo, dpd, gls, geodis, mondialRelay, lettres, bls, chronopost, colissimo, tnt, fedex, ups, ...PLANNED.map(planned)];
 const byId = Object.fromEntries(carriers.map((c) => [c.id, c]));
 
 /** Metadonnees publiques (pour l'UI), sans exposer process(). */

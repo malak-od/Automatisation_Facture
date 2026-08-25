@@ -66,6 +66,38 @@ async function writeImportXlsx(importRows, filePath, importSheetName = 'Import')
   await wb.xlsx.writeFile(filePath);
 }
 
+/** Relit le fichier "<sortie>_import_valeurs.csv" ecrit par un finaliseur Python (Range.Value
+ * via COM, donc les VRAIES valeurs calculees par Excel -- pas des formules recalculees a part
+ * en JS). Remonte pole transport 2026-08-24 : "le fichier import CSV de quelques transporteurs
+ * deconne alors que la feuille Import CSV du fichier de facture est correcte -> copier-coller
+ * depuis le fichier de la facture, coller en valeur". Colonnes A..V dans l'ordre IMPORT_COLUMNS
+ * (un classeur qui n'a pas toutes les 22 colonnes, ex. pas de Gazole/NbColis, laisse simplement
+ * les dernieres a vide). Retourne null si le fichier est absent (finaliseur pas encore adapte,
+ * ou export ignore -- cf. blocs try/except cote Python). */
+function readImportRowsFromValuesCsv(csvPath) {
+  if (!fs.existsSync(csvPath)) return null;
+  const text = fs.readFileSync(csvPath, 'utf8').replace(/^﻿/, '');
+  const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
+  const rows = [];
+  for (const line of lines) {
+    const cells = line.split(';');
+    const o = {};
+    IMPORT_COLUMNS.forEach((c, i) => {
+      let v = cells[i] !== undefined ? cells[i] : '';
+      if (c.key === 'DateValidite') {
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
+        v = m ? `${m[3]}/${m[2]}/${m[1]}` : v;
+      } else if (c.num) {
+        v = v === '' ? '' : Number(v);
+        if (Number.isNaN(v)) v = '';
+      }
+      o[c.key] = v;
+    });
+    rows.push(o);
+  }
+  return rows;
+}
+
 // ---- Mise en forme (largeurs reprises du fichier fait a la main + couleurs) ----
 const COLOR = {
   blue: 'FF305496',      // en-tete : colonnes brutes / identite
@@ -221,4 +253,4 @@ async function writeWorkbook(result, filePath) {
   return { totalHt };
 }
 
-module.exports = { writeImportCsv, writeImportXlsx, writeWorkbook };
+module.exports = { writeImportCsv, writeImportXlsx, writeWorkbook, readImportRowsFromValuesCsv };

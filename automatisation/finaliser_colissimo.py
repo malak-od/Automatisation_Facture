@@ -652,6 +652,65 @@ def main():
 
         retry(lambda: wb.Save())
         wb.Close(SaveChanges=True)
+
+        # ---- 5) Export "Import CSV" en VALEURS (pas en JS recalcule a part) : remontee pole
+        # transport 2026-08-24 ("le fichier import CSV deconne alors que la feuille Import CSV
+        # du fichier de facture est correcte -> copier-coller depuis le fichier de la facture,
+        # coller en valeur"). BUG TROUVE 2026-08-24 : lire Range.Value AVANT Save()/Close(),
+        # meme juste apres un Calculate(), peut renvoyer des cellules dans un etat transitoire
+        # (valeur d'erreur COM brute type -2146826246=0x800a07fa, ou carrement une ligne vide)
+        # qui ne correspond PAS a ce que contient le fichier une fois sauvegarde sur disque
+        # (verifie : le classeur sauvegarde a TOUJOURS les bonnes valeurs a ces memes cellules).
+        # Fix : fermer le classeur (deja fait ci-dessus), le ROUVRIR en lecture, et lire
+        # seulement alors -- meme etat que ce que le pole transport voit en ouvrant le fichier.
+        wbRead = None
+        try:
+            # wbRead ferme dans le finally imbrique ci-dessous, quoi qu'il arrive -- BUG
+            # TROUVE 2026-08-24 (constate en test) : une exception entre l'ouverture et la
+            # fermeture laissait ce classeur ouvert en arriere-plan (EXCEL.EXE orphelin,
+            # xl.Quit() du finally externe ne suffit pas toujours a le liberer), verrouillant
+            # le fichier de sortie pour toute regeneration suivante du meme mois.
+            wbRead = retry(lambda: xl.Workbooks.Open(os.path.abspath(sortie), UpdateLinks=0, ReadOnly=True))
+            imp = wbRead.Sheets("Import CSV")
+            # BUG TROUVE 2026-08-24 : recalculer la derniere ligne via Cells(...).End(xlUp) sur
+            # le classeur ROUVERT trouve parfois 1 ligne de trop (cf. meme bug/fix dans
+            # finaliser_fedex.py) -> une ligne fantome ("(vide)"/erreurs) s'ajoutait a la fin de
+            # l'export. Fix : reutiliser impNewLast, deja calcule et fiable (nombre REEL de
+            # lignes ecrites plus haut, = 1 + nbColis).
+            impLast = impNewLast
+            if impLast >= 2:
+                values = retry(lambda: imp.Range(imp.Cells(2, 1), imp.Cells(impLast, LAST_COL_IMPORT)).Value)
+                # cf. finaliser_fedex.py (meme bug/fix, 2026-08-24) : un item de cache pivot
+                # "(blank)" legitime sur le tracking peut glisser une ligne fantome dans le TCD
+                # -> exclue ici (colonne F = index 5, N Tracking), coherent avec le carrier Node
+                # qui filtre deja `if (!tracking) continue;`. Filet de securite residuel : une
+                # cellule encore en erreur COM (marshaling ponctuel) est ecrite vide plutot que
+                # comme un nombre absurde.
+                values = [row for row in values if str(row[5]).strip() and str(row[5]).strip() != "(vide)"]
+                n_err = 0
+                def clean(v):
+                    nonlocal n_err
+                    if isinstance(v, int) and not isinstance(v, bool) and v < -1000000:
+                        n_err += 1
+                        return ""
+                    return "" if v is None else v
+                export_path = os.path.splitext(sortie)[0] + "_import_valeurs.csv"
+                with open(export_path, "w", encoding="utf-8-sig", newline="") as f:
+                    w = csv.writer(f, delimiter=";")
+                    for row in values:
+                        w.writerow([clean(v) for v in row])
+                if n_err:
+                    print(f"AVERTISSEMENT: {n_err} cellule(s) en erreur COM lors de l'export Import CSV (valeurs) -- laissees vides, a verifier.")
+                print(f"EXPORT_IMPORT_VALEURS:{export_path}")
+        except Exception as e:
+            print("Export Import CSV (valeurs) ignore :", e)
+        finally:
+            if wbRead is not None:
+                try:
+                    wbRead.Close(SaveChanges=False)
+                except Exception:
+                    pass
+
         print("OK -> " + sortie)
     finally:
         try:
