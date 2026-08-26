@@ -1,7 +1,0 @@
-node_modules/
-uploads/
-outputs/
-out/
-server.log
-*.log
-*.csv
