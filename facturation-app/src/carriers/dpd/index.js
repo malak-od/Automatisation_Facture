@@ -12,7 +12,7 @@ const XLSX = require('xlsx');
 const pdfParse = require('pdf-parse');
 const { readCsv, num, roundUp1, round2 } = require('../../core/csv');
 const { validate } = require('../../core/validate');
-const { findBrutFiles, readBrutRows, poidsParTrackingFromExport } = require('../../core/exportBrut');
+const { readBrutRows, poidsParTrackingFromExport } = require('../../core/exportBrut');
 const path = require('path');
 const cfg = require('./config.json');
 
@@ -166,10 +166,10 @@ async function process(files) {
     };
   }).filter((rec) => rec.tracking);
 
-  // 2. Poids : brut si present, sinon repli export expeditions du mois/mois-1
-  //    (comme GLS/Geodis) ; le 4e niveau (portail myDPD) reste manuel/hors app.
+  // 2. Poids : brut si present, sinon Export (upload manuel OBLIGATOIRE, demande utilisateur
+  //    2026-08-25) ; le 4e niveau (portail myDPD) reste manuel/hors app.
   const period = dateValidite ? `${dateValidite.slice(6)}_${dateValidite.slice(3, 5)}` : null;
-  const brutPaths = period ? findBrutFiles(period, path.resolve(__dirname, '../../..')) : [];
+  const brutPaths = files.brut || [];
   const poidsExportBrut = poidsParTrackingFromExport(readBrutRows(brutPaths));
 
   const infos = [];
@@ -304,6 +304,7 @@ module.exports = {
   inputs: [
     { key: 'csv', label: 'Fichiers complément_facture DPD (CSV ou XLSX)', accept: '.csv,.xlsx', multiple: true, required: true },
     { key: 'pdf', label: 'Facture(s) PDF DPD (contrôle du total par facture)', accept: '.pdf', multiple: true, required: false },
+    { key: 'brut', label: 'Export des expéditions brutes (et mois précédent si dispo)', accept: '.xlsx,.xls', multiple: true, required: true },
   ],
   // Classeur = CLONE FIDELE du fichier fait a la main (Excel COM/Python), comme Geodis/Kuehne/Delivengo.
   outputNaming: { workbook: '{period}_Facture DPD', import: '{period}_DPD_Import' },

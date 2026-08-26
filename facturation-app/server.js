@@ -5,16 +5,23 @@
 const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const execFileAsync = require('util').promisify(execFile);
 const registry = require('./src/registry');
-const { writeImportCsv, writeImportXlsx, writeWorkbook, readImportRowsFromValuesCsv } = require('./src/core/excelOut');
+const { writeImportCsv, writeWorkbook, readImportRowsFromValuesCsv, readImportCsvFinal } = require('./src/core/excelOut');
+const { validate } = require('./src/core/validate');
+const { IMPORT_COLUMNS } = require('./src/core/importSchema');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000; // Number() : sinon "4000"+1 = "40001" (concat de chaîne)
 const UPLOADS = path.join(__dirname, 'uploads');
 const OUTPUTS = path.join(__dirname, 'outputs');
+// Dossier Telechargements Windows (demande utilisateur 2026-08-26 : le bouton "Ouvrir le
+// dossier" doit pointer ici, pas sur outputs/ de l'app) -- sous-dossier par stamp (comme
+// outputs/<stamp>/) pour ne pas melanger les fichiers de generations differentes.
+const DOWNLOADS = path.join(os.homedir(), 'Downloads');
 fs.mkdirSync(UPLOADS, { recursive: true });
 fs.mkdirSync(OUTPUTS, { recursive: true });
 
@@ -37,6 +44,45 @@ function explainFileError(e, targetPath) {
   return e;
 }
 
+/** Filtre les messages d'erreur techniques (stack Node/Python, TypeError, chemins bruts...)
+ * avant affichage utilisateur (audit pole transport 2026-08-26, point 3 : un message brut
+ * remontait tel quel a l'ecran pour tout ce qui n'etait pas deja gere par explainFileError,
+ * ex. bug Python inattendu -> illisible pour un non-developpeur). Le detail complet reste dans
+ * les logs serveur (console.error) pour le dev -- seul l'AFFICHAGE change ici. Les messages
+ * metier volontaires (deja rediges en francais clair par le code, ex. "Aucun fichier fourni...")
+ * ne matchent aucun de ces patterns et passent donc inchanges. */
+function userFacingError(e) {
+  const msg = String((e && e.message) || e || '');
+  const looksTechnical = /Traceback \(most recent call last\)|^(Type|Reference|Syntax|Range)Error|Cannot read propert|is not a function|is not defined|ENOENT|EACCES|undefined is not|\bat \S+:\d+:\d+|^Error: spawn|non[- ]zero exit status/i.test(msg);
+  if (!looksTechnical) return msg;
+  return "Une erreur inattendue est survenue pendant la génération — réessayez, et si le problème persiste, signalez-le à l'informatique avec l'heure exacte (le détail technique est conservé dans les logs du serveur).";
+}
+
+// Postes affiches dans le total UI -- colonnes O (Droits et taxes) a V (Gazole) du fichier
+// import.csv (demande utilisateur 2026-08-26 : "le total ça sera la somme de toutes les lignes
+// de la colonne O jusqu'à la colonne V"). Calcule sur le VRAI CSV final ecrit sur disque, pas
+// sur une donnee intermediaire en memoire -- meme principe que les alertes (cf. plus bas).
+const TOTAL_POSTE_KEYS = ['DroitsTaxes', 'Assurance', 'ZonesEloignees', 'ColisVolumineux', 'Adresses', 'Fret', 'PlusValueB2C', 'TaxeGasoil'];
+// Libelles lisibles pour l'UI, repris de IMPORT_COLUMNS (source unique des en-tetes) plutot que
+// duplique en dur ici.
+const POSTE_LABELS = Object.fromEntries(IMPORT_COLUMNS.filter((c) => TOTAL_POSTE_KEYS.includes(c.key)).map((c) => [c.key, c.label.trim()]));
+
+/** Somme les postes O->V sur des lignes d'import deja relues (readImportCsvFinal) -- TaxeGasoil
+ * reste texte dans le schema (num:false) meme s'il est numerique en pratique, d'ou le parse
+ * manuel commun a tous les postes plutot que de se fier a IMPORT_COLUMNS.num. */
+function sumPostesRows(rows) {
+  const totaux = Object.fromEntries(TOTAL_POSTE_KEYS.map((k) => [k, 0]));
+  for (const r of rows || []) {
+    for (const k of TOTAL_POSTE_KEYS) {
+      const raw = r[k];
+      const n = typeof raw === 'number' ? raw : Number(String(raw ?? '').replace(',', '.'));
+      if (Number.isFinite(n)) totaux[k] += n;
+    }
+  }
+  for (const k of TOTAL_POSTE_KEYS) totaux[k] = Math.round(totaux[k] * 100) / 100;
+  return totaux;
+}
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/outputs', express.static(OUTPUTS));
@@ -44,11 +90,11 @@ app.use('/outputs', express.static(OUTPUTS));
 // Liste des transporteurs (metadonnees pour l'UI)
 app.get('/api/carriers', (_req, res) => res.json(registry.list()));
 
-// Ouvre le dossier de sortie dans l'Explorateur Windows (logiciel local)
+// Ouvre le dossier de sortie (copie dans Telechargements) dans l'Explorateur Windows (logiciel local)
 app.post('/api/reveal', (req, res) => {
   const stamp = String(req.body.stamp || '').replace(/[^a-z0-9_]/gi, '');
-  const dir = path.join(OUTPUTS, stamp);
-  if (!stamp || !dir.startsWith(OUTPUTS) || !fs.existsSync(dir)) return res.status(400).json({ error: 'Dossier introuvable' });
+  const dir = path.join(DOWNLOADS, stamp);
+  if (!stamp || !dir.startsWith(DOWNLOADS) || !fs.existsSync(dir)) return res.status(400).json({ error: 'Dossier introuvable' });
   execFile('explorer.exe', [dir], () => {}); // explorer renvoie un code != 0 meme en cas de succes -> on ignore
   res.json({ ok: true });
 });
@@ -76,12 +122,10 @@ app.post('/api/process', upload.any(), async (req, res) => {
     const period = (periodOverride && periodOverride.formatted) || result.period || 'export';
     const suffix = 'test'; // suffixe figé (différencie du fichier fait à la main)
     const workbookOnly = !!carrier.workbookOnly; // ex. Delivengo : le classeur EST l'import
-    const posteKeys = result.posteKeys || [];
 
     // Nomenclature (comme le fichier fait a la main) + suffixe
     const naming = carrier.outputNaming || { workbook: '{period}_classeur', import: '{period}_import' };
     const wbName = `${naming.workbook.replace('{period}', period)}_${suffix}.xlsx`;
-    const impXlsxName = naming.import ? `${naming.import.replace('{period}', period)}_${suffix}.xlsx` : null;
     const impCsvName = naming.import ? `${naming.import.replace('{period}', period)}_${suffix}.csv` : null;
 
     // outputs/<carrier>_<periode>/ (ex. kuehne_2026_06). Regenerer le meme mois ecrase le dossier.
@@ -140,54 +184,92 @@ app.post('/api/process', upload.any(), async (req, res) => {
       await writeWorkbook({ ...result, pdfs: result.pdfs || null }, wbPath);
     }
 
-    // 1) Import ERP valeurs seules (CSV + XLSX) — sauf transporteurs "classeur seul". Genere
+    // 1) Import ERP valeurs seules (CSV UNIQUEMENT, plus de XLSX -- demande utilisateur
+    // 2026-08-26 : 2 fichiers de sortie par generation, pas 3 -- classeur Excel + CSV import,
+    // pour tous les transporteurs sans exception, y compris Lettres/multiImports). Genere
     // APRES le classeur (et non avant, cf. ordre historique) car carrier.importFromWorkbook
-    // (Colissimo/Fedex) relit les valeurs REELLEMENT calculees par Excel dans le classeur tout
-    // juste genere -- remontee pole transport 2026-08-24 : "le fichier import CSV de quelques
-    // transporteurs deconne alors que la feuille Import CSV du fichier de facture est correcte
-    // -> copier-coller depuis le fichier de la facture, coller en valeur". Repli sur
+    // (Colissimo/Fedex/UPS) relit les valeurs REELLEMENT calculees par Excel dans le classeur
+    // tout juste genere -- remontee pole transport 2026-08-24 : "le fichier import CSV de
+    // quelques transporteurs deconne alors que la feuille Import CSV du fichier de facture est
+    // correcte -> copier-coller depuis le fichier de la facture, coller en valeur". Repli sur
     // result.importRows (calcule en JS, comme avant) si le fichier de valeurs est absent
     // (finaliseur en echec, ou carrier sans ce flag).
     // multiImports : transporteurs a plusieurs fichiers import distincts (ex. Lettres :
     // Suivie / Prepa / SLAACE, fidele aux 3 fichiers du process reel) -- jamais combine avec
     // importFromWorkbook a ce jour.
     const multiDownloads = [];
+    // Total UI (colonnes O->V) recalcule sur le VRAI CSV final ecrit sur disque -- initialise a
+    // partir de result.controle (repli si aucun CSV n'est ecrit, ex. workbookOnly), ecrase plus
+    // bas des que les fichiers sont relus.
+    let totaux = Object.fromEntries(TOTAL_POSTE_KEYS.map((k) => [k, Math.round((result.controle[k] || 0) * 100) / 100]));
     if (!workbookOnly && result.multiImports) {
+      const sommeMulti = Object.fromEntries(TOTAL_POSTE_KEYS.map((k) => [k, 0]));
       for (const m of result.multiImports) {
         const csvName = `${period}_${m.name}_Import_${suffix}.csv`;
-        const xlsxName = `${period}_${m.name}_Import_${suffix}.xlsx`;
-        writeImportCsv(m.importRows, path.join(dir, csvName));
-        await writeImportXlsx(m.importRows, path.join(dir, xlsxName), m.sheetName || m.name);
+        const csvPath = path.join(dir, csvName);
+        writeImportCsv(m.importRows, csvPath);
         multiDownloads.push({
           key: m.key, name: m.name, lignes: m.lignes,
           csv: { url: `/outputs/${stamp}/${encodeURIComponent(csvName)}`, name: csvName },
-          xlsx: { url: `/outputs/${stamp}/${encodeURIComponent(xlsxName)}`, name: xlsxName },
         });
+        const finalRowsM = readImportCsvFinal(csvPath);
+        if (finalRowsM) {
+          const t = sumPostesRows(finalRowsM);
+          for (const k of TOTAL_POSTE_KEYS) sommeMulti[k] += t[k];
+        }
       }
-    } else if (!workbookOnly && impXlsxName) {
+      for (const k of TOTAL_POSTE_KEYS) totaux[k] = Math.round(sommeMulti[k] * 100) / 100;
+    } else if (!workbookOnly && impCsvName) {
       let rowsForImport = result.importRows;
       if (carrier.importFromWorkbook && importValuesCsvPath) {
         const fromWorkbook = readImportRowsFromValuesCsv(importValuesCsvPath);
         if (fromWorkbook && fromWorkbook.length) rowsForImport = fromWorkbook;
         try { fs.unlinkSync(importValuesCsvPath); } catch (e) { /* ignore */ }
       }
-      writeImportCsv(rowsForImport, path.join(dir, impCsvName));
-      await writeImportXlsx(rowsForImport, path.join(dir, impXlsxName), (result.sheetNames || {}).import || `${carrier.name}_Import`);
+      const impCsvPath = path.join(dir, impCsvName);
+      writeImportCsv(rowsForImport, impCsvPath);
+      // Alertes (POIDS=0, ZONE manquante, etc.) ET total UI (colonnes O->V, "Droits et taxes" a
+      // "Gazole") recalcules APRES coup en relisant le VRAI fichier CSV ecrit sur disque --
+      // demande utilisateur 2026-08-26 : "il faut remonter ces alertes apres la generation
+      // finale du fichier import.csv, car c'est celui qu'on importe dans l'ERP" (pas sur une
+      // donnee intermediaire en memoire, meme si le contenu est cense etre identique --
+      // garantit qu'aucune transformation d'ecriture, ex. arrondi/formatage fmtCsv, ne fait
+      // diverger l'alerte/le total du fichier reellement livre). S'applique a tous les
+      // transporteurs, pas seulement ceux avec importFromWorkbook.
+      const finalRows = readImportCsvFinal(impCsvPath);
+      if (finalRows) {
+        result.alerts = validate(finalRows).alerts;
+        totaux = sumPostesRows(finalRows);
+      }
     }
 
     const link = (name) => ({ url: `/outputs/${stamp}/${encodeURIComponent(name)}`, name });
     const downloads = {};
     if (workbookMode !== 'none') downloads.workbook = link(wbName);
-    if (!workbookOnly && impXlsxName && !result.multiImports) { downloads.xlsx = link(impXlsxName); downloads.csv = link(impCsvName); }
+    if (!workbookOnly && impCsvName && !result.multiImports) { downloads.csv = link(impCsvName); }
     if (multiDownloads.length) downloads.multi = multiDownloads;
+
+    // Copie des fichiers generes dans Telechargements\<stamp>\ (demande utilisateur 2026-08-26 :
+    // le bouton "Ouvrir le dossier" doit pointer vers Telechargements, pas outputs/ de l'app) --
+    // best-effort : ne bloque jamais la reponse si Telechargements est inaccessible/plein.
+    try {
+      const dlDir = path.join(DOWNLOADS, stamp);
+      fs.mkdirSync(dlDir, { recursive: true });
+      for (const name of fs.readdirSync(dir)) {
+        fs.copyFileSync(path.join(dir, name), path.join(dlDir, name));
+      }
+    } catch (e) {
+      console.warn('Copie vers Telechargements KO :', String(e.message || e).slice(0, 200));
+    }
+
     res.json({
       carrier: carrier.name,
       periode: period,
       stamp,
       classeurClone: workbookMode === 'clone',
       lignes: result.lignes != null ? result.lignes : result.importRows.length,
-      totaux: Object.fromEntries(posteKeys.map((k) => [k, Math.round((result.controle[k] || 0) * 100) / 100])),
-      totalHt: Math.round(posteKeys.reduce((s, k) => s + (result.controle[k] || 0), 0) * 100) / 100,
+      totaux: Object.fromEntries(TOTAL_POSTE_KEYS.map((k) => [POSTE_LABELS[k], totaux[k] || 0])),
+      totalHt: Math.round(TOTAL_POSTE_KEYS.reduce((s, k) => s + (totaux[k] || 0), 0) * 100) / 100,
       warnings: result.warnings,
       alerts: result.alerts,
       infos: result.infos || [],
@@ -195,7 +277,7 @@ app.post('/api/process', upload.any(), async (req, res) => {
     });
   } catch (e) {
     console.error('Error in /api/process:', e && e.stack ? e.stack : e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: userFacingError(e) });
   }
 });
 

@@ -88,7 +88,7 @@
 const path = require('path');
 const { num, round2, roundUp1 } = require('../../core/csv');
 const { validate } = require('../../core/validate');
-const { findBrutFiles, readBrutRows, epParTrackingFromExport } = require('../../core/exportBrut');
+const { readBrutRows, epParTrackingFromExport } = require('../../core/exportBrut');
 const cfg = require('./config.json');
 
 // Positions CSV brut (1-based, converties en 0-based) -- decalage CONFIRME -4 vs Facture UPS
@@ -307,7 +307,7 @@ async function process(files, opts) {
     const tracking = String(r[COL.numeroSuivi] || '').trim();
     if (!tracking || demandesAvoir1Z79.has(tracking)) continue;
     if (!parTracking.has(tracking)) {
-      parTracking.set(tracking, { postes: {}, zone: 0, nbColis: 0, poids: 0, assurance: 0, compte: '', pays: '', mode: '', aLigneFret: false });
+      parTracking.set(tracking, { postes: {}, zone: 0, nbColis: 0, poids: 0, assurance: 0, compte: '', compteBrut: '', pays: '', mode: '', aLigneFret: false });
     }
     const acc = parTracking.get(tracking);
 
@@ -354,20 +354,35 @@ async function process(files, opts) {
     const poidsLigne = num(r[COL.poidsFacture]);
     if (poidsLigne > acc.poids) acc.poids = poidsLigne;
     if (!acc.compte) acc.compte = normalizeCompte(tracking.slice(2, 8));
+    // Compte BRUT (colonne "Numero de compte" du CSV, ex. "0000A1912W") : repli si la
+    // derivation depuis le tracking (formule modele RIGHT(LEFT(tracking,8),6)) echoue --
+    // BUG TROUVE 2026-08-26 : cette formule suppose un prefixe tracking standard "1Z..." ;
+    // pour des trackings ATYPIQUES sans ce prefixe (ex. "A1912WTZX8M", confirme sur reel),
+    // elle decoupe au mauvais endroit et donne un compte invente ("912WTZ") absent de la
+    // table, alors que la colonne brute donne le VRAI compte ("0000A1912W" -> "A1912W",
+    // present dans la table). Le modele Excel n'utilise jamais cette colonne (formule fixe),
+    // mais rien n'empeche de s'en servir en repli quand la derivation echoue.
+    if (!acc.compteBrut) acc.compteBrut = normalizeCompte(String(r[COL.numeroCompte] || '').replace(/^0+/, ''));
     if (!acc.pays) acc.pays = String(r[COL.pays] || '').trim().toUpperCase();
   }
 
-  // Transporteur (UPS/UPS_COD) via compte extrait du tracking.
+  // Transporteur (UPS/UPS_COD) via compte extrait du tracking, repli sur le compte brut CSV
+  // si la derivation par tracking ne matche aucune entree connue.
   for (const [tracking, acc] of parTracking) {
     acc.transporteur = cfg.comptes[acc.compte] || 'inconnu';
+    if (acc.transporteur === 'inconnu' && acc.compteBrut && cfg.comptes[acc.compteBrut]) {
+      acc.transporteur = cfg.comptes[acc.compteBrut];
+      infos.push(`Tracking ${tracking} : compte "${acc.compte}" (dérivé du tracking) absent de la table, repli sur le compte brut CSV "${acc.compteBrut}" → ${acc.transporteur}.`);
+    }
     if (acc.transporteur === 'inconnu') {
       warnings.push(`Tracking ${tracking} : compte "${acc.compte}" absent de la table Comptes UPS — transporteur non déterminé.`);
     }
   }
 
-  // Export brut WMS (E/P) : m et m-1, meme mecanisme que Geodis/DPD/FedEx (core/exportBrut.js).
-  const appRoot = path.resolve(__dirname, '../../..');
-  const brutPaths = moisCible ? findBrutFiles(moisCible.length === 6 ? `${moisCible.slice(0, 4)}_${moisCible.slice(4)}` : moisCible, appRoot) : [];
+  // Export (E/P) : upload manuel OBLIGATOIRE -- demande utilisateur 2026-08-25, remplace le
+  // repli automatique sur un chemin fixe du serveur (Automatisation/AAAA MM - Export
+  // expeditions_brut.xlsx), qui ne survivrait pas a un deploiement sur un autre poste/serveur.
+  const brutPaths = files.brut || [];
   const epMap = brutPaths.length ? epParTrackingFromExport(readBrutRows(brutPaths)) : new Map();
   if (!brutPaths.length) warnings.push("Export WMS 'expéditions_brut' introuvable pour ce mois (E/P) — toutes les lignes sans correspondance seront classées 'P' par défaut (sauf plus-value BtoC détectée, qui force 'P').");
 
@@ -483,10 +498,12 @@ async function process(files, opts) {
   };
 }
 
-/** Args du finaliseur (csv + brut du mois/mois-1) -- meme pattern que FedEx/Delivengo. */
-function computeFinalizerArgs(files, period, appRoot) {
-  const brut = period ? findBrutFiles(period, appRoot) : [];
-  return ['--csv', ...(files.csv || []), '--brut', ...brut];
+/** Args du finaliseur (csv + Export, upload obligatoire, + period) -- meme pattern que
+ * FedEx/Delivengo/Colissimo. BUG TROUVE 2026-08-26 : period n'etait jamais transmis au
+ * finaliseur ("Date validite tarif" retombait sur l'auto-detection interne peu fiable, meme
+ * bug deja corrige cote carrier Node process() mais pas cote finaliseur Python). */
+function computeFinalizerArgs(files, period) {
+  return ['--csv', ...(files.csv || []), '--brut', ...(files.brut || []), ...(period ? ['--period', period] : [])];
 }
 
 module.exports = {
@@ -498,12 +515,19 @@ module.exports = {
   method: "Fichiers CSV Billing UPS (sans en-tete, colonnes resolues par position). Transporteur UPS/UPS_COD via compte extrait du tracking. Categorie ERP via cascade code classe (FRT/TAX) puis table Charge.CHG_CODE (472 codes). Zone FOURNIE par UPS (pas calculee). Poids/Colis volumineux/Assurance via formules modele exactes (baremes/plafonds). E/P via export WMS m/m-1, plus-value BtoC force 'P'. Colis 1Z79 exclus (demande d'avoir).",
   inputs: [
     { key: 'csv', label: 'Factures UPS Billing (CSV, 1 par facture)', accept: '.csv', multiple: true, required: true },
+    { key: 'brut', label: 'Export des expéditions brutes (et mois précédent si dispo)', accept: '.xlsx,.xls', multiple: true, required: true },
   ],
   outputNaming: { workbook: '{period}_Facture UPS', import: '{period}_UPS_Import' },
+  // Le fichier import CSV/XLSX est reconstruit depuis les valeurs REELLEMENT calculees par
+  // Excel dans l'onglet "Fichier import" du classeur genere (au lieu des importRows calcules
+  // a part en JS) -- remontee utilisateur 2026-08-26 (alertes/CSV livre doivent refleter le
+  // vrai classeur, pas un calcul JS divergent), meme mecanisme que Colissimo/FedEx, cf.
+  // server.js et finaliser_ups.py.
+  importFromWorkbook: true,
   finalizer: {
     script: '../automatisation/finaliser_ups.py',
     template: '../Transporteurs/UPS/2026_06_Facture UPS.xlsx',
-    buildArgs: (files, period, appRoot) => computeFinalizerArgs(files, period, appRoot),
+    buildArgs: (files, period) => computeFinalizerArgs(files, period),
   },
   process,
 };

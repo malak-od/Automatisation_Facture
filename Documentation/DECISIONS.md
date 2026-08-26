@@ -161,3 +161,114 @@ Investigation lancée suite à un écart de volume massif entre le fichier gén�
 **Validé end-to-end sur juillet 2026 réel** (52 CSV, 49485 lignes brutes) : 14 colis 1Z79 détectés, masqués du TCD, "Fichier import" confirmé à 0 ligne 1Z79 (contre 58 lignes présentes dans "Facture UPS", cohérent avec les données brutes). "Demande avoir" : 12/14 trackings exacts au centime près face au fichier fait-main.
 
 **Écart connu non résolu** : 5 lignes du fait-main dans "Demande avoir" ont un tracking `1ZA1912W...` (préfixe différent de `1Z79`, rattachées au compte UPS `0000A1912W`) — non couvertes par le filtre actuel (basé sur le préfixe tracking uniquement). Mis en pause sur demande explicite de l'utilisateur ("je dois vérifier ce compte d'abord") — ne pas étendre la règle sans confirmation.
+
+## UPS — "Fichier import" (onglet Excel) vs CSV final : 1Z79, RÉSOLU/CLARIFIÉ (2026-08-25)
+
+Investigation de "Fichier import" (comparaison fait-main/app sur juillet 2026, colonne "N° Tracking" = colonne 9, PAS colonne 6 "Réf.1" — erreur d'indexation initiale corrigée en cours de route). Résultat sur 6928 (fait-main) vs 6912 (app) trackings uniques : seulement 17 présents uniquement dans le fait-main, 1 seul uniquement dans l'app — très proche, mais révélait un point à clarifier.
+
+**Découverte initiale** : la quasi-totalité des 14 trackings 1Z79 (`1Z79A7T06820256284`, `1Z79A7T06818040332`, etc.) sont présents dans **l'onglet Excel "Fichier import"** du fait-main, avec un montant Frêt identique à celui déjà calculé dans "Demande avoir" (ex. `1Z79A7T06820256284` : Frêt=11,53€ dans les deux onglets).
+
+**Clarification utilisateur (2026-08-25)** : l'onglet Excel "Fichier import" **n'est pas le vrai livrable de facturation** — c'est le **CSV d'import** (fichier séparé) qui sert réellement à facturer le client. Les 1Z79 sont volontairement **exclus du CSV** (jamais facturés au client, comportement déjà correct dans le code actuel), mais **conservés dans l'onglet Excel "Fichier import"** à titre de suivi/preuve interne, en parallèle de "Demande avoir" (réclamation du remboursement à UPS).
+
+**Conclusion** : **aucun bug à corriger** sur l'exclusion des 1Z79 côté CSV — c'est le comportement voulu, déjà validé (0 ligne 1Z79 confirmée dans le CSV fait-main comme dans le CSV app). L'écart résiduel sur l'onglet Excel interne (14 trackings 1Z79 absents côté app) reste purement cosmétique/documentaire, sans impact financier — pas prioritaire, peut être aligné plus tard si souhaité (faire réapparaître les 1Z79 dans l'onglet Excel "Fichier import" sans les faire remonter au CSV).
+
+**Autre point secondaire, toujours en attente** : le tracking `A1912WSRQJ7` (famille du compte `0000A1912W` déjà repéré, cf. section "Demande avoir" ci-dessus) apparaît aussi dans "Fichier import" du fait-main mais pas dans l'app — l'utilisateur doit encore vérifier ce compte avant qu'on décide d'étendre une règle.
+
+## UPS — "Fichier import" : formules vivantes au lieu de valeurs figées (2026-08-25)
+
+Remontée utilisateur : contrairement au fichier fait-main (formules `XLOOKUP`/`TCD!col{ligne}` vivantes dans les cellules), "Fichier import" généré par l'app était figé en valeurs pures — aucune formule visible en ouvrant le classeur.
+
+**Cause racine** : les formules des postes ERP (Droits et taxes/Assurance/Zones éloignées/Colis volumineux/Adresses/Frêt/plus-value BtoC) référençaient le TCD par **ligne fixe** (`TCD!{col}{tcdrow}`, ex. `=IF(TCD!I4=0,"",TCD!I4)`) — reproduisant fidèlement la formule du modèle. Or "Fichier import" supprime ensuite les lignes sans aucune charge facturable (`EntireRow.Delete()`) : si ces formules étaient restées vivantes, une suppression aurait décalé les lignes restantes vers le mauvais tracking du TCD (piège déjà documenté en commentaire, décision d'origine du 2026-08-20 : figer en valeurs AVANT de supprimer, pour éviter ce décalage).
+
+**Fix** : les formules `TCD!{col}{tcdrow}` sont remplacées par un lookup dynamique sur le tracking — `XLOOKUP(I{row}, TCD!E:E, TCD!{col}:{col})` (fonction `tcd_lookup()` ajoutée dans `Automatisation/finaliser_ups.py`) — même principe que les formules déjà présentes dans le fichier fait-main pour ses propres colonnes (Pays, Ref.1, etc., toutes en `XLOOKUP` par tracking, jamais par position). Une formule qui cherche par tracking reste valide même après suppression physique de lignes : plus besoin de figer en valeurs. Le bloc `rangeImp.Value = valuesImp` (qui figeait tout) a été retiré ; seule la **lecture** des valeurs (pour identifier les lignes vides à supprimer) est conservée.
+
+**Validé end-to-end sur juillet 2026 réel** : mêmes chiffres globaux qu'avant le fix (15094 lignes montant=0 supprimées de "Facture UPS", 14 colis 1Z79, 9046 lignes sans identification, 2 lignes vides supprimées de "Fichier import" après application des formules) — aucune régression de comportement. Formules confirmées vivantes dans le fichier de sortie (`=IF(_xlfn.XLOOKUP(I2,TCD!E:E,TCD!J:J)=0,"",...)`). Totaux par poste comparés au fait-main : Droits et taxes, Zones éloignées, Colis volumineux identiques au centime près ; les écarts résiduels sur Frêt/Adresses/plus-value BtoC sont cohérents avec les écarts déjà documentés et non résolus (1Z79 dans "Fichier import" du fait-main, compte `0000A1912W`) — pas de nouvelle régression introduite par ce changement.
+
+## Export WMS "expéditions_brut" : upload manuel ajouté sur 5 transporteurs (2026-08-25)
+
+Constat utilisateur : le mécanisme E/P (et poids, pour DPD/GLS) de UPS/DPD/FedEx/Geodis/GLS cherchait automatiquement un fichier sur un **chemin fixe du serveur** (`Automatisation/AAAA MM - Export expéditions_brut.xlsx`, mois cible + mois précédent) — fonctionne sur ce poste, mais ne survivrait pas à un déploiement sur un autre poste/serveur (le fichier n'y serait simplement pas au même endroit).
+
+**Décision utilisateur** : ajouter un input optionnel d'upload sur les 5 carriers concernés, prioritaire sur la recherche automatique — repli inchangé sur le chemin fixe si rien n'est fourni (comportement actuel préservé sur ce poste).
+
+**Implémentation** (même changement répété sur les 5 carriers) :
+- `facturation-app/src/carriers/{ups,dpd,fedex,geodis,gls}/index.js` : `brutPaths = (files.brut && files.brut.length) ? files.brut : findBrutFiles(...)`.
+- `computeFinalizerArgs`/`buildArgs` (UPS, FedEx — les seuls dont le finaliseur Python reçoit aussi `--brut`) : même priorité appliquée.
+- Nouvel input `{ key: 'brut', label: "Export WMS 'expéditions_brut' du mois (et mois précédent si dispo) — optionnel, sinon recherché automatiquement", accept: '.xlsx,.xls', multiple: true, required: false }` ajouté aux 5 carriers.
+
+**Non testé** : le nouvel input n'a pas encore été exercé via un vrai upload HTTP (seule la recherche automatique — repli inchangé — a été validée jusqu'ici sur ces carriers).
+
+## Export : rendu obligatoire (plus de repli automatique) sur les 5 transporteurs (2026-08-25)
+
+Suite à la décision précédente (upload manuel optionnel, repli sur chemin fixe), l'utilisateur a précisé : l'upload doit être **obligatoire**, sans repli automatique du tout — cohérent avec l'objectif de déploiement sur un autre poste où ce chemin fixe n'existerait pas.
+
+**Implémentation** (UPS/DPD/FedEx/Geodis/GLS) :
+- Le mécanisme `findBrutFiles()` (recherche sur `Automatisation/AAAA MM - Export expéditions_brut.xlsx`) est **entièrement retiré** de ces 5 carriers — import inutilisé nettoyé.
+- `brutPaths = files.brut || []` — dépend exclusivement du fichier uploadé.
+- Label de l'input simplifié en `"Export du mois (et mois précédent si dispo)"`, `required: true` (bloque l'envoi côté UI si vide, `public/index.html` applique déjà `required` sur les inputs `multiple`).
+- `computeFinalizerArgs`/`buildArgs` (UPS, FedEx) simplifiés en conséquence (signature réduite, plus de `period`/`appRoot` nécessaires pour ce mécanisme).
+
+**Non testé** : pas de vérification via un vrai run end-to-end depuis ce changement (aucun export WMS disponible côté test sans upload — le comportement "aucune correspondance E/P/poids" attendu si l'utilisateur ne fournit rien reste à vérifier en conditions réelles).
+
+## Sélecteur "Mois de facturation" : préselection sur M-1 (2026-08-25)
+
+Constat utilisateur : le cycle de facturation traite toujours le mois **précédent** (en août on facture les expéditions de juillet, en septembre celles d'août, etc.) — le sélecteur préselectionnait à tort le mois courant.
+
+**Implémentation** : `facturation-app/public/index.html` (`monthOptions()`) — la présélection (`selected`) passe du mois courant au mois précédent (M-1), avec gestion du cas janvier (M-1 = décembre de l'année précédente, ajouté comme option supplémentaire hors de la boucle des 12 mois de l'année courante si nécessaire).
+
+## UPS — "Fichier import" (onglet Excel) : plus de résidu après la dernière ligne (2026-08-26)
+
+Remontée utilisateur : la feuille "Fichier import" ne doit pas traîner après sa dernière ligne de données.
+
+**Cause** : `ClearContents()` (déjà utilisé pour purger les lignes du modèle cloné au-delà de la nouvelle taille) vide le contenu mais garde la mise en forme (bordures/styles) — Excel continue donc de considérer ces lignes comme faisant partie de la zone utilisée (`UsedRange`) de la feuille. Constaté sur juillet 2026 réel : `max_row=7261` alors que la dernière vraie ligne de données était `6914` — 347 lignes vides mais toujours "actives" (visibles en `Ctrl+Fin`, impactant l'impression/la navigation).
+
+**Fix** : `Automatisation/finaliser_ups.py` — après la construction complète de "Fichier import" (formules + suppression des lignes sans charge facturable), les lignes au-delà de `newLastImp` sont désormais supprimées **physiquement** (`EntireRow.Delete()`, pas `ClearContents()`) si `UsedRange` dépasse la vraie dernière ligne — force Excel à réduire la zone utilisée à la bonne taille.
+
+**Validé sur juillet 2026 réel** : `max_row` passe de 7261 à 6914, exactement aligné sur la dernière ligne de données réelle (log : "347 ligne(s) résiduelle(s) supprimée(s) au-delà de la ligne 6914").
+
+**Périmètre** : ce fix ne concerne que l'onglet "Fichier import" (demande explicite de l'utilisateur) — les autres onglets ("Facture UPS", "TCD", "Demande avoir", etc.) n'ont pas été vérifiés/modifiés pour ce même problème.
+
+## UPS — openpyxl refusait l'Export uploadé (chemin sans extension) (2026-08-26)
+
+Erreur reproduite via l'app (`server.js` → repli `writeWorkbook` → crash `Cannot read properties of undefined (reading 'Droits et taxes')`, masquant la vraie erreur Python).
+
+**Vraie cause** : `Automatisation/finaliser_ups.py` (`load_brut_ep()`) appelait `openpyxl.load_workbook(p, ...)` avec `p` = chemin d'un fichier uploadé par `multer`, qui **renomme systématiquement en identifiant hexadécimal SANS EXTENSION** (`facturation-app/uploads/<hash>`, pas `<hash>.xlsx`). `openpyxl` refuse un tel chemin (`InvalidFileException: openpyxl does not support  file format`) même si le contenu est un vrai `.xlsx` valide — piège déjà rencontré et documenté sur BLS (`bls_carrier_construit.md`), pas anticipé lors de l'ajout de l'upload obligatoire de l'Export sur UPS/DPD/FedEx/Geodis/GLS.
+
+**Fix** : `load_brut_ep()` ouvre désormais le fichier en binaire (`open(p, "rb")`) et passe un buffer mémoire (`io.BytesIO`) à `openpyxl.load_workbook()` — `openpyxl` détecte le format par signature ZIP interne, indépendamment du nom/extension du chemin.
+
+**Effet de bord découvert en diagnostiquant** : le plus gros fichier récemment uploadé (34 Mo) s'est avéré être un **CSV UPS Billing** (signature texte `2.1,0000A1912W,...`), pas un export xlsx (signature ZIP `504b0304`) — probablement une confusion lors de l'upload entre le champ "Factures UPS Billing" et le nouveau champ "Export des expéditions brutes". Le fix `BytesIO` reste nécessaire dans tous les cas (chemin sans extension), mais **ne résout pas** une erreur si le mauvais type de fichier est réellement fourni dans le mauvais champ — à vérifier au prochain test que le bon fichier est bien dans le bon champ.
+
+**Non re-testé end-to-end via l'app** après ce fix (seule la fonction `load_brut_ep` isolée a été validée directement en Python sur le vrai fichier xlsx uploadé).
+
+## UPS — CSV import reconstruit depuis le classeur (importFromWorkbook) (2026-08-26)
+
+Remontée utilisateur : les alertes affichées (POIDS=0 etc.) et le CSV livré doivent refléter le vrai fichier Excel généré, pas le calcul JS séparé — même mécanisme déjà appliqué à Colissimo/FedEx (2026-08-24/25), UPS ne l'avait pas.
+
+**Implémentation** :
+- `facturation-app/src/carriers/ups/index.js` : nouveau flag `importFromWorkbook: true`.
+- `Automatisation/finaliser_ups.py` : après `wb.Save()`/`Close()`, le classeur est rouvert en lecture, l'onglet "Fichier import" (colonnes D→X, 21 colonnes : Transporteur→plus-value BtoC) est relu via `Range.Value` et exporté dans un CSV intermédiaire, signalé via `EXPORT_IMPORT_VALEURS:` sur stdout.
+- `facturation-app/server.js` : quand `carrier.importFromWorkbook` est actif et que les valeurs du classeur sont disponibles, les **alertes** (`result.alerts`) sont recalculées via `validate()` sur ces mêmes données — pas juste le fichier écrit, l'affichage aussi reflète le vrai livrable.
+
+**3 bugs trouvés et corrigés pendant la validation (tests HTTP réels sur juillet 2026)** :
+1. **Décalage de colonnes** : l'export lisait les colonnes E→X (5→24) au lieu de D→X (4→24) — "Transporteur" (colonne D) est en tête de la plage standard, l'oublier décalait tout l'export d'une colonne vers la droite par rapport à `IMPORT_COLUMNS` (le "Transporteur" du CSV affichait en fait la date, la date affichait la Réf.1, etc.).
+2. **Ligne fantôme en tête de fichier** (`Transporteur="inconnu"`, `Tracking="0.0"`) : même famille que le bug déjà rencontré sur Colissimo/FedEx (cellule encore en état transitoire au moment de la lecture COM) — filtrée sur la colonne tracking (index 5 dans la plage lue).
+3. **`--period` jamais transmis au finaliseur** : `computeFinalizerArgs`/`buildArgs` d'UPS n'avaient jamais reçu ni transmis `period` (contrairement à Colissimo), donc "Date validité tarif" retombait toujours sur l'auto-détection interne par majorité (le même bug déjà corrigé côté Node `process()` le 2026-08-20, mais jamais côté finaliseur Python). `finaliser_ups.py` (`parse_args`) accepte désormais `--period AAAA_MM`, prioritaire sur l'auto-détection.
+
+**Validé end-to-end sur juillet 2026 réel** (52 CSV + 2 fichiers Export réels) : 6912 lignes, colonnes correctement alignées, `DateValidite=01/07/2026` (juillet, correct), 230 alertes recalculées sur le vrai CSV livré (toujours concentrées sur le compte `1ZA1912W...`, point déjà en attente de vérification par l'utilisateur).
+
+## Suppression du fichier XLSX import (tous les transporteurs) (2026-08-26)
+
+Demande utilisateur : chaque génération doit produire exactement **2 fichiers** — le classeur Excel et le CSV import — au lieu de 3 (classeur + CSV + XLSX import). S'applique à tous les transporteurs sans exception, y compris Lettres (`multiImports`, qui produisait 1 CSV + 1 XLSX par groupe).
+
+**Implémentation** : `facturation-app/server.js` — tous les appels à `writeImportXlsx()` retirés (cas standard et cas `multiImports`), `downloads.xlsx` et `downloads.multi[].xlsx` supprimés de la réponse JSON. Variable `impXlsxName` (devenue inutilisée) retirée. `facturation-app/public/index.html` : référence à `m.xlsx.name` (affichage Lettres) retirée. La fonction `writeImportXlsx()` elle-même reste dans `src/core/excelOut.js` (encore utilisée par `cli.js`, hors scope de ce changement).
+
+**Non testé sur Lettres spécifiquement** — validé uniquement sur UPS (2 fichiers confirmés en sortie).
+
+## Alertes recalculées après écriture du CSV final (tous les transporteurs) (2026-08-26)
+
+Remontée utilisateur : les alertes affichées (POIDS=0 etc.) doivent être calculées **après la génération finale du fichier import.csv**, car c'est ce fichier précis qui est importé dans l'ERP — pas une donnée intermédiaire en mémoire, même identique en théorie.
+
+**Implémentation** :
+- `facturation-app/src/core/excelOut.js` : nouvelle fonction `readImportCsvFinal(csvPath)` — relit le **vrai fichier CSV final** tel qu'écrit par `writeImportCsv()` (encodage latin1, séparateur `;`, décimale virgule, dates déjà au format JJ/MM/AAAA). Distincte de `readImportRowsFromValuesCsv()` (celle-ci relit le CSV **intermédiaire** issu du classeur — encodage/format différents, pas le même fichier).
+- `facturation-app/server.js` : `validate()` est désormais appelé **après** `writeImportCsv(rowsForImport, impCsvPath)`, en relisant `impCsvPath` depuis le disque via `readImportCsvFinal()` — remplace l'ancien appel (fait juste avant l'écriture, sur les données en mémoire). S'applique à **tous les transporteurs**, pas seulement ceux avec `importFromWorkbook`.
+
+**Testé** : round-trip `writeImportCsv` → `readImportCsvFinal` validé isolément (types numériques/dates correctement reconstruits). Validé end-to-end sur UPS juillet 2026 réel : résultat identique (230 alertes) à l'ancien mécanisme — confirme que les deux étaient déjà cohérents, mais la garantie est désormais structurelle (le fichier réellement écrit fait foi) plutôt que fortuite.

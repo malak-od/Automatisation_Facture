@@ -50,7 +50,7 @@ const path = require('path');
 const pdfParse = require('pdf-parse');
 const { num, round2, roundUp1 } = require('../../core/csv');
 const { validate } = require('../../core/validate');
-const { findBrutFiles, readBrutRows, epParTrackingFromExport } = require('../../core/exportBrut');
+const { readBrutRows, epParTrackingFromExport } = require('../../core/exportBrut');
 const cfg = require('./config.json');
 
 function normKey(s) {
@@ -379,11 +379,12 @@ async function process(files) {
     infos.push(`Facture(s) absente(s) des PDF portail fournis (probablement déjà facturée(s) un mois précédent) exclue(s) du fichier livré : ${facturesSansPdf.join(', ')} (${facturesSansPdf.reduce((s, nf) => s + parFacture.get(nf).lignes.length, 0)} ligne(s)) — à confirmer avec le pôle transport.`);
   }
 
-  // Export brut WMS (E/P) : m et m-1, meme mecanisme que Geodis/DPD/Lettres (core/exportBrut.js).
-  const appRoot = path.resolve(__dirname, '../../..');
-  const brutPaths = moisCible ? findBrutFiles(moisCible.length === 6 ? `${moisCible.slice(0, 4)}_${moisCible.slice(4)}` : moisCible, appRoot) : [];
+  // Export (E/P) : upload manuel OBLIGATOIRE -- demande utilisateur 2026-08-25, remplace le
+  // repli automatique sur un chemin fixe du serveur, qui ne survivrait pas a un deploiement
+  // sur un autre poste/serveur.
+  const brutPaths = files.brut || [];
   const epMap = brutPaths.length ? epParTrackingFromExport(readBrutRows(brutPaths)) : new Map();
-  if (!brutPaths.length) warnings.push("Export WMS 'expéditions_brut' introuvable pour ce mois (E/P) — toutes les lignes sans correspondance seront classées 'P' par défaut.");
+  if (!brutPaths.length) warnings.push("Export 'expéditions_brut' non fourni (E/P) — toutes les lignes sans correspondance seront classées 'P' par défaut.");
 
   // Supplements "surplus" (Zones eloignees/Colis volumineux PDF/Plus-value BtoC) : map par
   // tracking, cumulee sur tous les PDF fournis (cf. extractSupplements). Colis volumineux
@@ -499,9 +500,8 @@ async function process(files) {
 /** Args du finaliseur (csv + brut du mois/mois-1 + pdf) -- meme pattern que Delivengo
  * (computeFinalizerArgs), le finaliseur Python recalcule lui-meme E/P via l'export WMS
  * plutot que de dependre d'un CSV intermediaire (cf. finaliser_fedex.py). */
-function computeFinalizerArgs(files, period, appRoot) {
-  const brut = period ? findBrutFiles(period, appRoot) : [];
-  return ['--csv', ...(files.csv || []), '--brut', ...brut, '--pdf', ...(files.pdf || [])];
+function computeFinalizerArgs(files) {
+  return ['--csv', ...(files.csv || []), '--brut', ...(files.brut || []), '--pdf', ...(files.pdf || [])];
 }
 
 module.exports = {
@@ -513,6 +513,7 @@ module.exports = {
   inputs: [
     { key: 'csv', label: 'Shipment detail (CSV export portail FedEx)', accept: '.csv', multiple: true, required: true },
     { key: 'pdf', label: 'Facture(s) PDF FedEx (contrôle du "Total dû")', accept: '.pdf', multiple: true, required: false },
+    { key: 'brut', label: 'Export des expéditions brutes (et mois précédent si dispo)', accept: '.xlsx,.xls', multiple: true, required: true },
   ],
   outputNaming: { workbook: '{period}_Facture Fedex', import: '{period}_Fedex_Import' },
   // Le fichier import CSV/XLSX est reconstruit depuis les valeurs REELLEMENT calculees par
@@ -522,7 +523,7 @@ module.exports = {
   finalizer: {
     script: '../automatisation/finaliser_fedex.py',
     template: '../Transporteurs/Fedex/2026_06_Facture Fedex.xlsx',
-    buildArgs: (files, period, appRoot) => computeFinalizerArgs(files, period, appRoot),
+    buildArgs: (files) => computeFinalizerArgs(files),
   },
   process,
 };

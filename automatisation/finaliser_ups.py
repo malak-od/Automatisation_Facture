@@ -150,28 +150,43 @@ def colis_volumineux_montant(montant_reel):
 
 
 def parse_args(argv):
+    """--csv <csv...> [--brut <xlsx...>] [--period AAAA_MM]"""
     modele, sortie = argv[1], argv[2]
     csvs, brut, cur = [], [], None
+    period = None
     for a in argv[3:]:
         if a == "--csv":
             cur = "c"
         elif a == "--brut":
             cur = "b"
+        elif a == "--period":
+            cur = "p"
         elif cur == "c":
             csvs.append(a)
         elif cur == "b":
             brut.append(a)
-    return modele, sortie, csvs, brut
+        elif cur == "p":
+            period = a
+            cur = None
+    return modele, sortie, csvs, brut, period
 
 
 def load_brut_ep(brut_paths):
     """Map {tracking -> 'entreprise'/'particulier'} depuis l'export WMS partage (meme
     mecanisme que Delivengo/Geodis/DPD/FedEx) -- colonnes AP=PRO_TRACKING(41)/Q=
     DES_PARTICULIER(16), 0-based. Point relais -> entreprise."""
+    import io
     import openpyxl
     m = {}
     for p in [bp for bp in brut_paths if bp]:
-        wb = openpyxl.load_workbook(p, read_only=True)
+        # BUG TROUVE 2026-08-26 : openpyxl refuse un chemin SANS EXTENSION (InvalidFileException
+        # "openpyxl does not support  file format") -- les fichiers uploades via multer sont
+        # renommes en identifiant hexadecimal sans extension (piege deja connu, cf. BLS). Fix :
+        # ouvrir en binaire et passer un buffer memoire (openpyxl accepte un objet fichier-like,
+        # detecte le format par SIGNATURE ZIP interne, pas par le nom de fichier).
+        with open(p, "rb") as f:
+            buf = io.BytesIO(f.read())
+        wb = openpyxl.load_workbook(buf, read_only=True)
         ws = wb[wb.sheetnames[0]]
         for row in ws.iter_rows(min_row=2, values_only=True):
             if len(row) > 41:
@@ -197,7 +212,7 @@ def retry(fn, tries=8, delay=0.6):
 
 
 def main():
-    modele, sortie, csv_paths, brut_paths = parse_args(sys.argv)
+    modele, sortie, csv_paths, brut_paths, period = parse_args(sys.argv)
     if not csv_paths:
         raise RuntimeError("Aucun CSV fourni (--csv <facture1.csv> [...]).")
     shutil.copyfile(modele, sortie)  # on ne touche JAMAIS au modele
@@ -212,23 +227,31 @@ def main():
         raise RuntimeError("Fichier(s) UPS vide(s) ou illisible(s).")
     print(f"Entrée : {len(all_rows)} ligne(s) brute(s), {len(csv_paths)} fichier(s).")
 
-    # Mois cible = mois majoritaire (Date de facture).
+    # Mois cible = choix utilisateur (--period, source de verite, decision 2026-08-20 --
+    # BUG TROUVE 2026-08-26 : --period n'etait jamais transmis au finaliseur, "Date validite
+    # tarif" restait calculee par majorite sur "Date de la facture" du CSV brut, peu fiable,
+    # cf. carrier Node index.js meme fix) -- repli sur le mois majoritaire si absent.
     from collections import Counter
-    compte_mois = Counter()
-    for r in all_rows:
-        d = str(r[COL["date_facture"]] if len(r) > COL["date_facture"] else "").strip()
-        m = re.match(r"^(\d{4})-(\d{2})-\d{2}$", d)
-        if m:
-            compte_mois[f"{m.group(1)}{m.group(2)}"] += 1
+    import datetime as _dt
+    EXCEL_EPOCH = _dt.datetime(1899, 12, 30)
     date_validite_serial = None
-    if compte_mois:
-        mois_cible = compte_mois.most_common(1)[0][0]
-        import datetime as _dt
-        annee, mois = int(mois_cible[:4]), int(mois_cible[4:6])
-        EXCEL_EPOCH = _dt.datetime(1899, 12, 30)
-        date_validite_serial = (_dt.datetime(annee, mois, 1) - EXCEL_EPOCH).days
-    else:
-        mois_cible = None
+    mois_cible = None
+    if period:
+        m = re.fullmatch(r"(\d{4})_(\d{2})", period)
+        if m:
+            mois_cible = f"{m.group(1)}{m.group(2)}"
+            date_validite_serial = (_dt.datetime(int(m.group(1)), int(m.group(2)), 1) - EXCEL_EPOCH).days
+    if mois_cible is None:
+        compte_mois = Counter()
+        for r in all_rows:
+            d = str(r[COL["date_facture"]] if len(r) > COL["date_facture"] else "").strip()
+            m = re.match(r"^(\d{4})-(\d{2})-\d{2}$", d)
+            if m:
+                compte_mois[f"{m.group(1)}{m.group(2)}"] += 1
+        if compte_mois:
+            mois_cible = compte_mois.most_common(1)[0][0]
+            annee, mois = int(mois_cible[:4]), int(mois_cible[4:6])
+            date_validite_serial = (_dt.datetime(annee, mois, 1) - EXCEL_EPOCH).days
 
     # Colis 1Z79 (regle FACTURATION EXCEL.docx) : colis viticulteur retourne chez La Ruche --
     # reste dans "Facture UPS" (donnees brutes, decision utilisateur 2026-08-25 -- confirme
@@ -519,12 +542,26 @@ def main():
             15: '=IF(D{row}="UPS_COD",_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!J:J),_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!I:I))',  # O Poids
             16: '=IF(COUNTIF(\'ST SV\'!H:H,I{row})=0,"inconnu",_xlfn.XLOOKUP(I{row},\'ST SV\'!H:H,\'ST SV\'!N:N))',  # P mode envoi
         }
+        # BUG TROUVE 2026-08-25 (signale par l'utilisateur : "Fichier import" n'a pas de
+        # formules comme le fichier fait-main) : les formules ci-dessous referencaient le TCD
+        # par LIGNE FIXE (TCD!col{tcdrow}) -- fige en valeurs plus bas AVANT suppression des
+        # lignes vides pour eviter un decalage (une ligne supprimee aurait laisse les lignes
+        # suivantes pointer vers le mauvais tracking du TCD). Fix : remplace par un XLOOKUP
+        # dynamique sur le tracking (colonne I, deja utilise par les autres formules
+        # ci-dessus) -- exactement le meme principe que les formules "zone colis poids
+        # assurance"/"Facture UPS" deja en XLOOKUP par tracking, jamais par position. Une
+        # formule qui cherche par tracking reste valide meme apres suppression de lignes ->
+        # permet de GARDER des formules vivantes dans "Fichier import" (fidele au fait-main)
+        # au lieu de figer en valeurs.
+        def tcd_lookup(col):
+            return f"_xlfn.XLOOKUP(I{{row}},TCD!E:E,TCD!{col}:{col})"
+
         if col_tva:
-            formulas_import[17] = f'=IF(TCD!{col_tva}{{tcdrow}}="",0,0.2)'  # Q TVA
+            formulas_import[17] = f'=IF({tcd_lookup(col_tva)}="",0,0.2)'  # Q TVA
         else:
             retry(lambda: wsImp.Range(wsImp.Cells(2, 17), wsImp.Cells(newLastImp, 17)).__setattr__("Value", 0))
         if col_droits_taxes:
-            formulas_import[18] = f'=IF(TCD!{col_droits_taxes}{{tcdrow}}=0,"",TCD!{col_droits_taxes}{{tcdrow}})'  # R Droits et taxes
+            formulas_import[18] = f'=IF({tcd_lookup(col_droits_taxes)}=0,"",{tcd_lookup(col_droits_taxes)})'  # R Droits et taxes
         else:
             retry(lambda: wsImp.Range(wsImp.Cells(2, 18), wsImp.Cells(newLastImp, 18)).ClearContents())
         formulas_import[19] = "=IF(_xlfn.XLOOKUP(I{row},'zone colis poids assurance'!D:D,'zone colis poids assurance'!G:G)=0,\"\",MAX(10,ROUNDUP(0.02*_xlfn.XLOOKUP(I{row},'zone colis poids assurance'!D:D,'zone colis poids assurance'!G:G),2)))"  # S Assurance
@@ -537,28 +574,29 @@ def main():
             # fichier reel livre montre 0. Fix : traiter aussi 0 comme "absence de charge",
             # coherent avec le fait qu'un forfait de 40EUR n'a pas de sens pour un poste facture
             # 0EUR.
-            formulas_import[20] = f'=IF(OR(TCD!{col_zones_eloignees}{{tcdrow}}="",TCD!{col_zones_eloignees}{{tcdrow}}=0),"",40)'  # T Zones éloignées
+            formulas_import[20] = f'=IF(OR({tcd_lookup(col_zones_eloignees)}="",{tcd_lookup(col_zones_eloignees)}=0),"",40)'  # T Zones éloignées
         else:
             retry(lambda: wsImp.Range(wsImp.Cells(2, 20), wsImp.Cells(newLastImp, 20)).ClearContents())
         if col_colis_vol:
+            cv = tcd_lookup(col_colis_vol)
             formulas_import[21] = (
-                f'=IF(TCD!{col_colis_vol}{{tcdrow}}=0,"",IF(TCD!{col_colis_vol}{{tcdrow}}<3,3,'
-                f'IF(TCD!{col_colis_vol}{{tcdrow}}<15,15,IF(TCD!{col_colis_vol}{{tcdrow}}<50,35,'
-                f'IF(TCD!{col_colis_vol}{{tcdrow}}<100,59,IF(TCD!{col_colis_vol}{{tcdrow}}<150,177,'
-                f'ROUNDUP(TCD!{col_colis_vol}{{tcdrow}}/59,0)*59))))))'
+                f'=IF({cv}=0,"",IF({cv}<3,3,'
+                f'IF({cv}<15,15,IF({cv}<50,35,'
+                f'IF({cv}<100,59,IF({cv}<150,177,'
+                f'ROUNDUP({cv}/59,0)*59))))))'
             )  # U Colis volumineux
         else:
             retry(lambda: wsImp.Range(wsImp.Cells(2, 21), wsImp.Cells(newLastImp, 21)).ClearContents())
         if col_adresse:
-            formulas_import[22] = f'=IF(TCD!{col_adresse}{{tcdrow}}="","",11.5)'  # V Adresses
+            formulas_import[22] = f'=IF({tcd_lookup(col_adresse)}="","",11.5)'  # V Adresses
         else:
             retry(lambda: wsImp.Range(wsImp.Cells(2, 22), wsImp.Cells(newLastImp, 22)).ClearContents())
         if col_fret:
-            formulas_import[23] = f'=IF(TCD!{col_fret}{{tcdrow}}="","",ROUND(TCD!{col_fret}{{tcdrow}},2))'  # W Frêt
+            formulas_import[23] = f'=IF({tcd_lookup(col_fret)}="","",ROUND({tcd_lookup(col_fret)},2))'  # W Frêt
         else:
             retry(lambda: wsImp.Range(wsImp.Cells(2, 23), wsImp.Cells(newLastImp, 23)).ClearContents())
         if col_plus_value:
-            formulas_import[24] = f'=IF(TCD!{col_plus_value}{{tcdrow}}="","",TCD!{col_plus_value}{{tcdrow}})'  # X plus-value BtoC
+            formulas_import[24] = f'=IF({tcd_lookup(col_plus_value)}="","",{tcd_lookup(col_plus_value)})'  # X plus-value BtoC
         else:
             retry(lambda: wsImp.Range(wsImp.Cells(2, 24), wsImp.Cells(newLastImp, 24)).ClearContents())
 
@@ -599,16 +637,19 @@ def main():
         # indelivrable isolee sans ligne FRT) : EXCLUS de "Fichier import" (confirme par
         # comparaison au fichier reel de juin 2026, 0 ligne totalement vide sur 8736 -- decision
         # utilisateur 2026-08-20 : garder TOUTES les lignes dans "Facture UPS", filtrer
-        # UNIQUEMENT "Fichier import"). Conversion en VALEURS d'abord (les formules
-        # referencent TCD par POSITION FIXE -- supprimer des lignes physiquement casserait ces
-        # references si elles restaient des formules).
+        # UNIQUEMENT "Fichier import"). BUG TROUVE 2026-08-25 (signale par l'utilisateur :
+        # "Fichier import" n'a pas de formules comme le fichier fait-main) -- les formules des
+        # postes ERP ci-dessus etaient figees en VALEURS ici avant suppression des lignes vides
+        # (necessaire tant qu'elles referencaient le TCD par ligne fixe). Elles referencent
+        # desormais le tracking par XLOOKUP (cf. plus haut) -- restent valides meme apres
+        # suppression de lignes, donc PLUS BESOIN de figer : "Fichier import" garde des
+        # formules vivantes, fidele au fichier fait-main.
         if newLastImp >= 2:
             # Lecture en BLOC (1 seul aller-retour COM au lieu de milliers) -- la boucle
             # cellule-par-cellule/Delete()-par-ligne precedente timeoutait (>590s sur 8700+
             # lignes, BUG PERF TROUVE 2026-08-20).
             rangeImp = wsImp.Range(wsImp.Cells(2, 1), wsImp.Cells(newLastImp, LAST_COL_IMPORT))
-            valuesImp = rangeImp.Value  # tuple de tuples
-            retry(lambda: rangeImp.__setattr__("Value", valuesImp))  # fige en valeurs
+            valuesImp = rangeImp.Value  # tuple de tuples (lecture seule, formules NON figees)
             # Colonnes montant (postes ERP, 1-based -> index 0-based dans valuesImp) : R Droits
             # et taxes(18), S Assurance(19), T Zones eloignees(20), U Colis volumineux(21),
             # V Adresses(22), W Fret(23), X plus-value BtoC(24).
@@ -637,6 +678,23 @@ def main():
         wsImp.Range(wsImp.Cells(1, 1), wsImp.Cells(max(newLastImp, 2), LAST_COL_IMPORT)).AutoFilter()
         xl.Calculate()
 
+        # BUG TROUVE 2026-08-26 (signale par l'utilisateur : "la feuille ne doit pas trainer
+        # apres la derniere ligne") : ClearContents() (etape precedente) vide le CONTENU des
+        # lignes residuelles du modele clone (mise en forme/bordures gardees), donc Excel
+        # continue de considerer ces lignes comme faisant partie de la feuille (UsedRange
+        # gonfle bien au-dela de newLastImp -- constate : max_row=7261 pour 6914 lignes de
+        # donnees reelles, 347 lignes de residu "vide" mais toujours dans la zone utilisee).
+        # Fix : supprimer PHYSIQUEMENT les lignes au-dela de newLastImp (EntireRow.Delete(),
+        # pas juste ClearContents) -- force Excel a reduire UsedRange a la vraie derniere ligne.
+        wsImpUsedRange = wsImp.UsedRange
+        wsImpUsedLastRow = wsImpUsedRange.Row + wsImpUsedRange.Rows.Count - 1
+        if wsImpUsedLastRow > newLastImp:
+            retry(lambda: wsImp.Range(
+                wsImp.Cells(newLastImp + 1, 1), wsImp.Cells(wsImpUsedLastRow, LAST_COL_IMPORT)
+            ).EntireRow.Delete())
+            print(f"'Fichier import' : {wsImpUsedLastRow - newLastImp} ligne(s) residuelle(s) (mise en forme sans donnees) supprimee(s) au-dela de la ligne {newLastImp}.")
+        xl.Calculate()
+
         # 7) "Demande avoir" (1Z79) : Tracking/Nb colis/Montant/Cause -- Factures/Poids/Mode
         #    livraison laisses vides (saisie manuelle du pole transport, jamais remplis meme
         #    dans le fichier fait-main). Purge d'abord les lignes du modele clone (mois
@@ -661,6 +719,56 @@ def main():
         xl.Calculate()
         retry(lambda: wb.Save())
         wb.Close(SaveChanges=True)
+
+        # 8) Export "Fichier import" en VALEURS (pas en JS recalcule a part) : remontee
+        # utilisateur 2026-08-26 -- les alertes affichees (POIDS=0 etc.) et le CSV livre
+        # doivent refleter le VRAI classeur (formules XLOOKUP resolues), pas le calcul JS
+        # separe du carrier Node (qui peut diverger, ex. Réf.1/Réf.2 jamais remplis cote JS).
+        # Meme mecanisme que finaliser_colissimo.py/finaliser_fedex.py (2026-08-24/25) :
+        # rouvrir le classeur SAUVEGARDE en lecture (etat stable, pas de valeur d'erreur COM
+        # transitoire), lire les colonnes D->X (4->24 = les 21 colonnes standard ERP presentes
+        # dans "Fichier import", en commencant par "Transporteur" -- BUG TROUVE 2026-08-26 :
+        # demarrer a la colonne E (DateValidite) au lieu de D decalait TOUT l'export d'1
+        # colonne vers la gauche par rapport a IMPORT_COLUMNS. TaxeGasoil/NbColis n'existent
+        # pas dans cet onglet, resteront vides cote CSV final -- cf. IMPORT_COLUMNS, meme
+        # convention que Colissimo).
+        wbRead = None
+        try:
+            wbRead = retry(lambda: xl.Workbooks.Open(os.path.abspath(sortie), UpdateLinks=0, ReadOnly=True))
+            wsImpRead = wbRead.Sheets("Fichier import")
+            impLast = wsImpRead.Cells(wsImpRead.Rows.Count, 9).End(xlUp).Row  # colonne I = N Tracking
+            if impLast >= 2:
+                values = retry(lambda: wsImpRead.Range(wsImpRead.Cells(2, 4), wsImpRead.Cells(impLast, 24)).Value)
+                # BUG TROUVE 2026-08-26 (constate en test reel) : une ligne fantome (Transporteur
+                # ="inconnu", Tracking="0.0") apparaissait au tout debut de l'export -- meme
+                # famille de bug que Colissimo/FedEx (cellule encore en etat transitoire au
+                # moment de la lecture COM, malgre la reouverture apres sauvegarde). Filtre sur
+                # le tracking (index 5 dans row = colonne I=9 moins le decalage colonne D=4).
+                values = [row for row in values if str(row[5] or "").strip() not in ("", "0.0", "(vide)", "inconnu")]
+                n_err = 0
+                def clean(v):
+                    nonlocal n_err
+                    if isinstance(v, int) and not isinstance(v, bool) and v < -1000000:
+                        n_err += 1
+                        return ""
+                    return "" if v is None else v
+                export_path = os.path.splitext(sortie)[0] + "_import_valeurs.csv"
+                with open(export_path, "w", encoding="utf-8-sig", newline="") as f:
+                    w = csv.writer(f, delimiter=";")
+                    for row in values:
+                        w.writerow([clean(v) for v in row])
+                if n_err:
+                    print(f"AVERTISSEMENT: {n_err} cellule(s) en erreur COM lors de l'export Fichier import (valeurs) -- laissees vides, a verifier.")
+                print(f"EXPORT_IMPORT_VALEURS:{export_path}")
+        except Exception as e:
+            print("Export Fichier import (valeurs) ignore :", e)
+        finally:
+            if wbRead is not None:
+                try:
+                    wbRead.Close(SaveChanges=False)
+                except Exception:
+                    pass
+
         print(f"OK -> {sortie}")
     finally:
         try:

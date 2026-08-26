@@ -12,7 +12,7 @@ const XLSX = require('xlsx');
 const pdfParse = require('pdf-parse');
 const { num, roundUp1, round2 } = require('../../core/csv');
 const { validate } = require('../../core/validate');
-const { findBrutFiles, readBrutRows, epParTrackingFromExport } = require('../../core/exportBrut');
+const { readBrutRows, epParTrackingFromExport } = require('../../core/exportBrut');
 const cfg = require('./config.json');
 
 const POSTE_KEYS = ['DroitsTaxes', 'Assurance', 'ZonesEloignees', 'ColisVolumineux', 'Adresses', 'Fret', 'PlusValueB2C', 'Gazole'];
@@ -152,11 +152,10 @@ async function process(files) {
     };
   }).filter((rec) => rec.tracking);
 
-  // E/P non fiable dans le fichier Geodis lui-meme -> repli sur l'export expeditions
-  // du mois/mois-1 (donnee en arriere-plan, pas a fournir -> cf. core/exportBrut.js),
-  // colonne DES_PARTICULIER (particulier/entreprise/point relais) via PRO_TRACKING.
-  const periodeEp = dateValidite ? `${dateValidite.slice(6)}_${dateValidite.slice(3, 5)}` : null;
-  const brutPathsEp = periodeEp ? findBrutFiles(periodeEp, path.resolve(__dirname, '../../..')) : [];
+  // E/P non fiable dans le fichier Geodis lui-meme -> Export (upload manuel OBLIGATOIRE,
+  // demande utilisateur 2026-08-25), colonne DES_PARTICULIER (particulier/entreprise/point
+  // relais) via PRO_TRACKING.
+  const brutPathsEp = files.brut || [];
   const epParTracking = epParTrackingFromExport(readBrutRows(brutPathsEp));
 
   const importRows = recs.map((rec) => ({
@@ -223,6 +222,7 @@ module.exports = {
   inputs: [
     { key: 'facture', label: 'Facture Geodis (xlsx/csv)', accept: '.xlsx,.csv', multiple: true, required: true },
     { key: 'pdf', label: 'Facture(s) PDF Geodis (controle du total)', accept: '.pdf', multiple: true, required: false },
+    { key: 'brut', label: 'Export des expéditions brutes (et mois précédent si dispo)', accept: '.xlsx,.xls', multiple: true, required: true },
   ],
   // Classeur = CLONE FIDELE du fichier fait a la main (Excel COM/Python), comme Kuehne/Delivengo.
   outputNaming: { workbook: '{period}_Facture Geodis', import: '{period}_Geodis_Import' },

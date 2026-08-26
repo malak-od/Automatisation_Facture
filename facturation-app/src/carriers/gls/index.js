@@ -9,7 +9,7 @@
 const path = require('path');
 const { readCsv, num, colIndex, roundUp1, round2 } = require('../../core/csv');
 const { validate } = require('../../core/validate');
-const { findBrutFiles, readBrutRows } = require('../../core/exportBrut');
+const { readBrutRows } = require('../../core/exportBrut');
 const cfg = require('./config.json');
 
 const POSTE_KEYS = ['ZonesEloignees', 'ColisVolumineux', 'Adresses', 'Fret', 'TaxeGasoil'];
@@ -117,10 +117,10 @@ function process(files) {
     if (!g.pays && iPays >= 0 && r[iPays]) g.pays = r[iPays].trim();
   });
 
-  // Export expeditions brut (donnee en arriere-plan, pas un document a fournir a chaque
-  // fois -- meme fichier/convention que Delivengo/Lettres) : repli poids 3e niveau.
+  // Export du mois (upload manuel OBLIGATOIRE, demande utilisateur 2026-08-25) : repli poids
+  // 3e niveau.
   const period = dateValidite ? `${dateValidite.slice(6)}_${dateValidite.slice(3, 5)}` : null;
-  const brutPaths = period ? findBrutFiles(period, path.resolve(__dirname, '../../..')) : [];
+  const brutPaths = files.brut || [];
   const poidsExportBrut = poidsParTrackingFromExport(readBrutRows(brutPaths));
 
   // 2. Poids final + zone/TVA par colis (poidsFinal/zone/tva partages par toutes les
@@ -226,6 +226,7 @@ module.exports = {
   inputs: [
     { key: 'csv', label: 'Export BCF GLS (CSV)', accept: '.csv', multiple: true, required: true },
     { key: 'pdf', label: 'Facture PDF GLS — pour reconciliation TTC', accept: '.pdf', multiple: true, required: false },
+    { key: 'brut', label: 'Export des expéditions brutes (et mois précédent si dispo)', accept: '.xlsx,.xls', multiple: true, required: true },
   ],
   process,
 };

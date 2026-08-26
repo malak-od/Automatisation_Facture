@@ -236,10 +236,20 @@ function monthOptions() {
   const now = new Date();
   const year = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
+  // Preselection = mois PRECEDENT (M-1) -- demande utilisateur 2026-08-25 : on facture toujours
+  // les expeditions du mois d'avant (ex. en aout on facture juillet, en septembre on facture
+  // aout, etc.), jamais le mois courant. Gere le cas janvier -> decembre de l'annee precedente
+  // (peut sortir de la liste des 12 mois de "year" affichee ci-dessous, cf. option ajoutee a part).
+  const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+  const prevYear = currentMonth === 1 ? year - 1 : year;
+  const prevVal = `${prevYear}_${String(prevMonth).padStart(2,'0')}`;
   const opts = [];
+  if (prevYear !== year) {
+    opts.push(`<option value="${prevVal}" selected>${prevVal.replace('_',' ')}</option>`);
+  }
   for (let m = 1; m <= 12; m++) {
     const val = `${year}_${String(m).padStart(2,'0')}`;
-    opts.push(`<option value="${val}" ${m===currentMonth?'selected':''}>${val.replace('_',' ')}</option>`);
+    opts.push(`<option value="${val}" ${val===prevVal?'selected':''}>${val.replace('_',' ')}</option>`);
   }
   return opts.join('');
 }
@@ -357,9 +367,14 @@ function renderResult(d, monthChosen) {
   const icons = { workbook: '📊', xlsx: '📥', csv: '📄' };
   const downloads = d.downloads || {};
   const fileItems = Object.entries(downloads).filter(([k])=>k!=='multi').map(([k,x])=>`<li>${icons[k]||'📄'} ${x.name}</li>`).join('')
-    + (downloads.multi || []).map((m)=>`<li>📄 ${m.csv.name} (${m.lignes} lignes)</li><li>📥 ${m.xlsx.name}</li>`).join('');
+    + (downloads.multi || []).map((m)=>`<li>📄 ${m.csv.name} (${m.lignes} lignes)</li>`).join('');
+  // Ligne d'audit 2026-08-26 (pole transport) : 0 ligne generee passait inapercu (juste un
+  // "0" dans le titre, aucune alerte) -- risque de livrer un import vide sans s'en rendre
+  // compte si le mauvais fichier est depose par erreur.
+  const zeroLignes = !d.lignes;
   document.getElementById('result').innerHTML = `
     <div class="card"><h3>2. Résultat — ${d.lignes} lignes</h3>
+      ${zeroLignes ? `<div class="plan-note" style="border-color:#ef4444;background:rgba(239,68,68,.1);color:#f87171">🚫 Aucune ligne exploitable trouvée dans les fichiers déposés — vérifiez qu'il s'agit bien des bons documents avant d'utiliser les fichiers générés.</div>` : ''}
       ${hasTotals ? `<div class="total">${d.totalHt.toFixed(2)} € HT</div>
       <table><thead><tr><th>Poste</th><th style="text-align:right">Montant €</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
       <div class="kv" style="margin-top:12px"><b>${d.alerts.length} alerte(s) à vérifier</b>${(d.warnings||[]).length?` · ${d.warnings.length} point(s) à compléter à la main`:''}${(d.infos||[]).length?` · ${d.infos.length} info(s) (normal)`:''}</div>
@@ -370,7 +385,7 @@ function renderResult(d, monthChosen) {
     <div class="card"><h3>3. Fichiers générés${d.periode ? ' — période ' + d.periode : ''}</h3>
       ${monthMismatch ? `<div class="kv" style="color:var(--warn)">⚠️ Mois choisi (${monthChosen.replace('_',' ')}) différent de la période détectée dans les documents (${d.periode.replace('_',' ')}) — vérifiez les fichiers déposés.</div>` : ''}
       ${downloads.workbook ? (d.classeurClone ? '<div class="kv" style="color:#7dd3fc">📊 Classeur = <b>copie fidèle</b> du fichier fait à la main (feuilles, formules, pivots, mise en forme)</div>' : '<div class="kv">📊 Classeur en version simplifiée (Excel non disponible)</div>') : ''}
-      <div class="kv" style="margin-top:8px">✅ Enregistrés dans le dossier <b>outputs\\${d.stamp}\\</b> :</div>
+      <div class="kv" style="margin-top:8px">✅ Enregistrés dans le dossier <b>Téléchargements\\${d.stamp}\\</b> :</div>
       <ul style="margin:6px 0 14px 20px;color:#cbd5e1;line-height:1.9">${fileItems}</ul>
       <button class="go" onclick="reveal('${d.stamp}')">📂 Ouvrir le dossier</button>
     </div>`;
@@ -378,7 +393,7 @@ function renderResult(d, monthChosen) {
 
 async function reveal(stamp) {
   try { await fetch('/api/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stamp }) }); }
-  catch (e) { /* dossier accessible manuellement dans outputs/ */ }
+  catch (e) { /* dossier accessible manuellement dans Telechargements/ */ }
 }
 
 load();

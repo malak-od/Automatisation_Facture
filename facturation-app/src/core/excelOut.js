@@ -98,6 +98,31 @@ function readImportRowsFromValuesCsv(csvPath) {
   return rows;
 }
 
+/** Relit le VRAI fichier CSV final tel qu'ecrit par writeImportCsv() (latin1, ';', decimale
+ * virgule, dates deja au format JJ/MM/AAAA) -- pour recalculer validate() sur le fichier
+ * REELLEMENT livre/importe dans l'ERP, pas sur une donnee intermediaire en memoire (demande
+ * utilisateur 2026-08-26 : "il faut remonter ces alertes apres la generation finale du fichier
+ * import.csv, car c'est celui qu'on importe dans l'ERP"). Distinct de
+ * readImportRowsFromValuesCsv() (celle-la relit le CSV INTERMEDIAIRE issu du classeur, utf8,
+ * format different -- pas le meme fichier ni le meme format). */
+function readImportCsvFinal(csvPath) {
+  if (!fs.existsSync(csvPath)) return null;
+  const text = fs.readFileSync(csvPath, 'latin1');
+  const lines = text.split(/\r\n|\n/).filter((l) => l.length > 0);
+  if (lines.length <= 1) return [];
+  const rows = [];
+  for (const line of lines.slice(1)) {
+    const cells = line.split(';');
+    const o = {};
+    IMPORT_COLUMNS.forEach((c, i) => {
+      const raw = cells[i] !== undefined ? cells[i] : '';
+      o[c.key] = c.num ? (raw === '' ? '' : Number(raw.replace(',', '.'))) : raw;
+    });
+    rows.push(o);
+  }
+  return rows;
+}
+
 // ---- Mise en forme (largeurs reprises du fichier fait a la main + couleurs) ----
 const COLOR = {
   blue: 'FF305496',      // en-tete : colonnes brutes / identite
@@ -253,4 +278,4 @@ async function writeWorkbook(result, filePath) {
   return { totalHt };
 }
 
-module.exports = { writeImportCsv, writeImportXlsx, writeWorkbook, readImportRowsFromValuesCsv };
+module.exports = { writeImportCsv, writeImportXlsx, writeWorkbook, readImportRowsFromValuesCsv, readImportCsvFinal };
