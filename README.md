@@ -52,12 +52,23 @@ d'environnement `PORT`).
   est déjà ouvert (ou qu'un process `EXCEL.EXE` orphelin traîne en tâche de
   fond suite à un plantage), la génération échoue avec un message explicite
   — vérifier le Gestionnaire des tâches, pas seulement les fenêtres visibles.
+  Contrainte structurelle (pilotage Excel COM), pas un bug à corriger.
 - Un **service Windows** (NSSM, ou tâche planifiée au démarrage) est
   recommandé pour que l'app survive à une fermeture de session, plutôt que
   de dépendre d'un terminal laissé ouvert.
 - Aucune gestion HTTPS/authentification intégrée. Si l'app doit être
   accessible au-delà du poste local, prévoir un reverse proxy (IIS/nginx)
   avec accès restreint au réseau interne.
+- **Erreurs inattendues (bug applicatif)** : l'interface affiche un message
+  générique côté utilisateur ("réessayez, signalez à l'informatique") plutôt
+  que la stack technique brute. Le détail complet (traceback Python, erreur
+  Node) reste dans les logs du terminal serveur (`console.error`) — c'est ce
+  log-là qu'il faut consulter pour diagnostiquer un incident, pas le message
+  affiché à l'écran.
+- **0 ligne générée** : si les fichiers déposés ne correspondent pas au bon
+  transporteur/format, l'application génère quand même un classeur/CSV vide
+  plutôt que de planter — un bandeau rouge le signale dans l'interface, à ne
+  pas ignorer avant d'utiliser les fichiers produits.
 
 ## Mettre à jour cette branche
 
