@@ -1,13 +1,18 @@
 # Déploiement — Facturation (PRODUCTION UNIQUEMENT)
 
-> SSO : `authentik/AUTHENTIK.md`. Configuration nginx : `deploy/nginx-facturation.conf`.
+> SSO : `authentik/AUTHENTIK.md`. Forward-auth NPM : `deploy/npm-facturation-advanced.conf`.
 > Ce fichier décrit **où** poser quoi, et **avec quels noms**.
 
 Cette app ne suit pas le schéma habituel du socle commun : elle **pilote Excel
 via COM** (`pywin32`), donc elle **ne peut pas** tourner sur la VM Linux
 `192.168.5.200` comme `module-transport` ou `gestion-du-temps` (démonstration
 détaillée au §9). Elle tourne sur une **VM Windows dédiée avec Excel installé**,
-dans le VLAN serveurs ; la VM `.200` ne fait que du reverse-proxy et porte le SSO.
+dans le VLAN serveurs.
+
+Elle ne suit pas non plus le socle sur le SSO : les autres apps portent l'OIDC
+dans leur code, celle-ci délègue tout à un **forward-auth porté par NPM**
+(`AUTHENTIK.md`). Il n'y a **aucun nginx intermédiaire** — NPM *est* nginx, et
+il tape directement la VM Windows, conformément au §2.d du socle commun.
 
 ```
 navigateur
@@ -15,10 +20,8 @@ navigateur
    ▼
 UniFi / UDM ......... résolution DNS interne  ──> 192.168.5.11
    ▼
-NPM (192.168.5.11) .. TLS du domaine, Proxy Host
-   │ http://192.168.5.200:3500
-   ▼
-nginx (VM 192.168.5.200) ── auth_request ──> Authentik (192.168.5.55)
+NPM (192.168.5.11) .. TLS du domaine + forward-auth (onglet Advanced)
+   │                     └─ auth_request ──> Authentik (192.168.5.55:9443)
    │ http://192.168.5.74:4000
    ▼
 node server.js ──> python finaliser_*.py ──> Excel (COM)
@@ -42,10 +45,9 @@ sont la première cause de configuration introuvable six mois plus tard.
 |---|---|---|
 | Domaine de l'app | partout | `facturation.intra.laruche-logistique-france.fr` |
 | Enregistrement DNS | 🛜 UniFi | hôte `facturation` dans `intra.laruche-logistique-france.fr` → `192.168.5.11` |
-| Règle de pare-feu | 🛜 UniFi | `ALLOW-facturation-nginx-vers-windows-4000` |
-| Proxy Host | 🔀 NPM | `facturation.intra.laruche-logistique-france.fr` → `192.168.5.200:3500` |
-| Fichier de site | 🐧 VM `.200` | `/etc/nginx/sites-available/facturation` |
-| Journaux nginx | 🐧 VM `.200` | `/var/log/nginx/facturation.{access,error}.log` |
+| Proxy Host | 🔀 NPM | `facturation.intra.laruche-logistique-france.fr` → `192.168.5.74:4000` |
+| Forward-auth | 🔀 NPM | onglet **Advanced** du Proxy Host — référence : `deploy/npm-facturation-advanced.conf` |
+| Règles pare-feu | 🪟 VM app | `facturation - nginx uniquement` (autorise `.11`) · `facturation - blocage direct` |
 | Provider | 🔑 Authentik | `facturation-web` |
 | Application (slug) | 🔑 Authentik | `facturation` |
 | Groupes | 🔑 Authentik | `facturation-administrateur` · `facturation-operateur` |
@@ -58,11 +60,12 @@ sont la première cause de configuration introuvable six mois plus tard.
 > projet GitLab **casse l'assignation du runner** (piège documenté au §2.a du
 > socle commun). C'est le seul endroit où le nom diverge, et c'est volontaire.
 
-**Ports réservés pour cette app** (tableau §1 du socle commun) : **3500** en
-production. `3400` était déjà pris ; `3501` reste libre si une recette est créée
-un jour. Le `4000` de la VM Windows n'est **pas** un port de la convention :
-c'est le port local de Node sur la VM Windows, jamais exposé au-delà de la
-VM `.200`.
+**Ports.** Le tableau du §1 du socle commun attribue les ports **sur la VM
+`.200`**, pour éviter les collisions entre apps qui y cohabitent. Facturation
+n'y tourne pas : elle est seule sur `192.168.5.74` et y écoute le **4000**, qui
+ne relève donc d'aucune convention. Le `3500` avait été réservé du temps où un
+nginx intermédiaire était envisagé sur `.200` ; ce montage a été abandonné, et
+`3500` reste **libre** pour une autre app.
 
 ---
 
@@ -70,7 +73,7 @@ VM `.200`.
 
 L'app est hébergée sur une **VM Windows dédiée, dans le VLAN serveurs** — pas
 sur une station de travail. Ce choix règle trois problèmes d'un coup : l'IP
-n'est plus distribuée en DHCP, le flux vers nginx redevient intra-VLAN, et la
+n'est plus distribuée en DHCP, le flux depuis NPM reste intra-VLAN, et la
 facturation ne dépend plus d'un poste que quelqu'un peut éteindre ou déplacer.
 
 ### a. Gabarit de la VM
@@ -212,69 +215,83 @@ git checkout prod
    `facturation` → **`192.168.5.11`** (l'IP de NPM, pas celle de la VM app :
    c'est NPM qui porte le certificat du domaine).
 2. **IP fixe de la VM** : `192.168.5.74` doit être fixe (configurée dans la
-   VM, ou réservée sur la MAC côté DHCP). L'`upstream` nginx la code en dur —
-   une IP qui bouge, c'est un `502` un matin sans que personne n'ait touché à
-   la configuration.
-3. **Règle de pare-feu** `ALLOW-facturation-nginx-vers-windows-4000` :
-   autoriser **`192.168.5.200` → `192.168.5.74` TCP 4000**. C'est le seul
-   flux entrant nécessaire côté VM Windows. La VM étant dans le même VLAN que
-   nginx, c'est une règle **intra-VLAN** — et non plus une règle de routage
-   inter-VLAN comme du temps de l'hébergement sur station de travail.
-4. Le flux `192.168.5.200 → 192.168.5.55` (Authentik) doit être ouvert pour le
-   `auth_request` — il l'est déjà pour les autres apps hébergées sur `.200`.
+   VM, ou réservée sur la MAC côté DHCP). NPM la code en dur dans son Proxy
+   Host — une IP qui bouge, c'est un `502` un matin sans que personne n'ait
+   touché à la configuration.
+
+> ✅ **Aucune règle de pare-feu UniFi n'est nécessaire** (vérifié en août 2026).
+> NPM (`192.168.5.11`) et la VM app (`192.168.5.74`) sont dans le même `/24` :
+> leur trafic est commuté et ne traverse jamais la passerelle, donc aucune règle
+> ne le voit. La règle inter-VLAN décrite dans les versions précédentes de ce
+> document datait de l'hébergement sur une station en `192.168.1.x`.
 
 > Cette app n'a **pas** de base PostgreSQL : pas de règle `5432` à créer,
 > contrairement à la check-list du socle commun.
 
-## 3. 🐧 VM 192.168.5.200 — nginx
+## 3. 🔀 NPM (192.168.5.11:81) — Proxy Host **et** forward-auth
 
-```bash
-sudo cp deploy/nginx-facturation.conf /etc/nginx/sites-available/facturation
-sudo ln -s /etc/nginx/sites-available/facturation /etc/nginx/sites-enabled/
-# ⚠️ renseigner l'IP fixe de la VM Windows dans le bloc `upstream facturation_app`
-sudo nano /etc/nginx/sites-available/facturation
-sudo nginx -t && sudo systemctl reload nginx
-```
+> 🪤 **Il n'y a pas de nginx sur `192.168.5.200`** — vérifié en août 2026,
+> `command -v nginx` y répond `ABSENT`. Le socle commun (§2.d) prévoit NPM
+> comme unique reverse-proxy, tapant directement le port de l'app ; aucune app
+> n'a de nginx local. Les versions précédentes de ce document décrivaient un
+> site nginx sur `.200` : ce montage n'a jamais existé.
 
-Vérifier que le module d'authentification déléguée est bien compilé :
+**Onglet Details**
 
-```bash
-nginx -V 2>&1 | grep -o with-http_auth_request_module   # doit répondre
-```
+| Champ | Valeur |
+|---|---|
+| Domain Names | `facturation.intra.laruche-logistique-france.fr` |
+| Scheme | `http` |
+| Forward Hostname / IP | **`192.168.5.74`** |
+| Forward Port | **`4000`** |
+| Websockets Support | ON |
+| **Cache Assets** | **OFF** |
 
-## 4. 🔀 NPM (192.168.5.11:81) — Proxy Host
+> ⚠️ **Cache Assets doit rester désactivé.** Derrière un `auth_request`, une
+> réponse servie depuis le cache échappe à la vérification d'authentification —
+> et l'app diffuse des **classeurs de facturation générés** (`.xlsx`, `.csv`).
+> Les mettre en cache, c'est risquer qu'un utilisateur reçoive la facture d'un
+> autre.
 
-- **Domain Names** : `facturation.intra.laruche-logistique-france.fr`
-- **Forward Hostname/IP** : `192.168.5.200` — **Port : `3500`** — scheme `http`
-- **Websockets Support** : ON
-- **SSL** : certificat du domaine, *Force SSL* activé
-- **Advanced** — obligatoire, sinon les générations longues sont coupées :
+**Onglet SSL** — certificat du domaine, **Force SSL** activé. Sans HTTPS forcé,
+Authentik pose ses cookies sur une session HTTP et le SSO devient erratique.
 
-```
-proxy_read_timeout 900s;
-proxy_send_timeout 900s;
-client_max_body_size 200m;
-```
+**Onglet Advanced** — coller le contenu de `deploy/npm-facturation-advanced.conf`.
+Il porte à la fois les timeouts (900 s, sans quoi les générations longues sont
+coupées à ~60 s, cf. socle commun §2.d) et tout le forward-auth Authentik.
 
-> 🪤 Le piège des ~60 s du socle commun s'applique ici de plein fouet : une
-> génération Excel dépasse largement la minute sur un gros transporteur. Le
-> timeout doit être relevé **aux deux étages** (NPM *et* nginx), sinon c'est
-> l'étage le plus bas qui coupe.
+> 🪤 **Les en-têtes `X-authentik-*` n'atteignent pas l'app** avec ce montage. En
+> nginx, les `proxy_set_header` d'un niveau supérieur sont ignorés dès qu'une
+> `location` en définit un seul — et le `location /` généré par NPM en définit
+> plusieurs. Sans conséquence aujourd'hui : `server.js` ignore ces en-têtes.
+> Mais pour tracer qui a généré quelle facture (`AUTHENTIK.md` §5), il faudra
+> reprendre la main sur `location /` via l'onglet **Custom Locations**.
+
+> 🪤 **Cette configuration n'est pas versionnée** : c'est un champ texte dans
+> une interface web. Pas de `nginx -t`, pas de git, et elle disparaît si
+> quelqu'un recrée le Proxy Host. `deploy/npm-facturation-advanced.conf` en est
+> la copie de référence — **le tenir à jour à chaque modification dans NPM**.
 
 ## 5. 🪟 Pare-feu Windows — l'étape à ne pas sauter
 
-Le SSO est appliqué par nginx, **pas** par l'application. Tant que la machine
-Windows répond à tout le LAN sur le port 4000, il suffit de taper
+Le SSO est appliqué par NPM, **pas** par l'application. Tant que la VM Windows
+répond à tout le LAN sur le port 4000, il suffit de taper
 `http://192.168.5.74:4000` pour entrer sans authentification, et de forger
-soi-même les en-têtes `X-authentik-*`.
+soi-même les en-têtes `X-authentik-*`. **Ce n'est pas théorique** : constaté en
+août 2026 depuis un poste utilisateur, `HTTP 200` sans la moindre
+identification, avant la pose de ces règles.
 
 ```powershell
 New-NetFirewallRule -DisplayName "facturation - nginx uniquement" `
   -Direction Inbound -Protocol TCP -LocalPort 4000 -Action Allow `
-  -RemoteAddress 192.168.5.200
+  -RemoteAddress 192.168.5.11
 New-NetFirewallRule -DisplayName "facturation - blocage direct" `
   -Direction Inbound -Protocol TCP -LocalPort 4000 -Action Block
 ```
+
+`192.168.5.11` est l'IP de NPM : c'est le **seul** client légitime du port 4000.
+Les tests locaux sur la VM (`http://localhost:4000`) ne traversent pas le
+pare-feu entrant et continuent de fonctionner.
 
 Variante plus sûre si l'app n'a rien à faire du reste du réseau : la faire
 écouter uniquement en local (`HOST=127.0.0.1`) et poser un tunnel — mais en
@@ -290,10 +307,11 @@ Voir `authentik/AUTHENTIK.md` — Proxy Provider `facturation-web` en mode
 ## 7. Vérifications après déploiement
 
 ```bash
-# 🐧 VM .200 — l'app Windows répond bien à travers le réseau
+# 🔀 depuis NPM (.11) — l'app Windows repond a travers le reseau
 curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.5.74:4000/api/carriers   # 200
+# depuis tout autre poste, ce meme curl DOIT echouer (pare-feu §5)
 
-# 🐧 VM .200 — l'outpost Authentik répond (401 SANS cookie = correct)
+# 🐧 l'outpost Authentik répond (401 SANS cookie = correct)
 # Les 3 en-tetes X-* sont indispensables : sans X-Original-URL l'outpost renvoie
 # 500 meme quand tout est correct (cf. AUTHENTIK.md §6).
 curl -sk -o /dev/null -w "%{http_code}\n" \
@@ -303,10 +321,10 @@ curl -sk -o /dev/null -w "%{http_code}\n" \
   -H "X-Forwarded-Host: facturation.intra.laruche-logistique-france.fr" \
   https://192.168.5.55:9443/outpost.goauthentik.io/auth/nginx                     # 401
 
-# 🐧 VM .200 — nginx redirige bien vers le SSO au lieu de servir l'app
-curl -sS -o /dev/null -w "%{http_code} %{redirect_url}\n" \
-  -H "Host: facturation.intra.laruche-logistique-france.fr" \
-  http://127.0.0.1:3500/                    # 302 vers /outpost.goauthentik.io/start
+# 🌐 depuis n'importe quel poste — NPM redirige vers le SSO au lieu de l'app
+curl -sk -o /dev/null -w "%{http_code} %{redirect_url}\n" \
+  https://facturation.intra.laruche-logistique-france.fr/
+#    -> 302 vers /outpost.goauthentik.io/start?rd=/
 ```
 
 Puis, en **navigation privée**, ouvrir

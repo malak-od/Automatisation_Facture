@@ -141,17 +141,17 @@ curl -sk -o /dev/null -w "%{http_code}\n" \
   https://192.168.5.55:9443/outpost.goauthentik.io/auth/nginx
 # -> 401 = provider trouvé, outpost OK (c'est le bon résultat)
 # -> 404 = provider non rattaché à l'outpost (§3) ou External host erroné (§1)
-# -> connexion refusée = port 9443 fermé depuis la VM : essayer le port 9000
-#    (HTTP) et ajuster le proxy_pass de deploy/nginx-facturation.conf
+# -> connexion refusée = port 9443 injoignable : essayer le port 9000 (HTTP)
+#    et ajuster le proxy_pass de deploy/npm-facturation-advanced.conf
 ```
 
 > 🪤 **Les trois en-têtes `X-*` ne sont pas décoratifs.** Sans `X-Original-URL`,
 > l'outpost ne peut pas reconstituer la requête d'origine et répond **`500`** —
 > y compris sur une configuration parfaitement saine (constaté en août 2026 sur
 > ce montage). Un `curl` réduit au seul `Host:` fait donc croire à une panne
-> qui n'existe pas. nginx, lui, envoie bien ces en-têtes : c'est le
+> qui n'existe pas. NPM, lui, envoie bien ces en-têtes : c'est le
 > `proxy_set_header X-Original-URL` du `location /outpost.goauthentik.io` dans
-> `deploy/nginx-facturation.conf`.
+> `deploy/npm-facturation-advanced.conf`.
 
 Puis, en **navigation privée**, ouvrir
 `https://facturation.intra.laruche-logistique-france.fr` :
