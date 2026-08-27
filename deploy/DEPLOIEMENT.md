@@ -49,9 +49,9 @@ sont la première cause de configuration introuvable six mois plus tard.
 | Provider | 🔑 Authentik | `facturation-web` |
 | Application (slug) | 🔑 Authentik | `facturation` |
 | Groupes | 🔑 Authentik | `facturation-administrateur` · `facturation-operateur` |
-| VM hôte de l'app | 🖥️ hyperviseur | `facturation-app` — `192.168.5.74`, IP **fixe**, VLAN serveurs |
+| VM hôte de l'app | 🖥️ hyperviseur | `CRE1-SV-EXEL-01` — `192.168.5.74`, IP **fixe**, VLAN serveurs |
 | Accès RDP à la VM | 🪟 VM app | `192.168.5.74:2547` — port **non standard**, le `3389` est fermé |
-| Service Windows | 🪟 VM app | `facturation` |
+| Tâche planifiée | 🪟 VM app | `facturation` — **tâche**, pas un service Windows (§1.c) |
 | Dépôt GitLab | 🦊 GitLab | `developpement/automatisation-facturation` |
 
 > Le dépôt garde son nom historique `automatisation-facturation` : renommer un
@@ -77,7 +77,7 @@ facturation ne dépend plus d'un poste que quelqu'un peut éteindre ou déplacer
 
 | | Valeur |
 |---|---|
-| Nom | `facturation-app` |
+| Nom | `CRE1-SV-EXEL-01` |
 | IP | **`192.168.5.74`** — fixe, dans `192.168.5.0/24` |
 | OS | **Windows Server 2025** — édition **Desktop Experience** obligatoire (Excel ne s'installe pas sur Server Core) |
 | Accès admin | **RDP sur le port `2547`**, pas le `3389` — NLA activé |
@@ -109,20 +109,61 @@ cd facturation-app
 npm ci
 ```
 
-### c. Service Windows
+### c. Démarrage automatique — tâche planifiée, **pas** un service Windows
 
-L'app doit survivre à une fermeture de session : la lancer en **service
-Windows** nommé `facturation` (NSSM), et **non** dans un terminal laissé ouvert.
+L'app doit démarrer seule au boot, sans terminal laissé ouvert. Le réflexe
+serait d'en faire un service Windows (NSSM). **C'est un piège ici**, et il
+annule tout le travail du §1.a.
+
+> 🪤 **Un service Windows s'exécute toujours en session 0**, y compris quand on
+> lui affecte un compte utilisateur : il ne rejoint pas la session interactive
+> de ce compte, même ouverte par autologon. Or Excel COM a besoin d'un bureau
+> interactif. Un service NSSM fonctionnerait donc en test manuel puis se
+> bloquerait en production, sans erreur ni journal — le mode de panne le plus
+> coûteux à diagnostiquer de tout ce document.
+
+La tâche planifiée déclenchée **à l'ouverture de session** place au contraire
+le processus dans la session interactive de l'autologon, celle où Excel est
+configuré.
 
 ```powershell
-nssm install facturation "C:\Program Files\nodejs\node.exe" "server.js"
-nssm set facturation AppDirectory "C:\Projets\automatisation-facturation\facturation-app"
-nssm set facturation AppEnvironmentExtra PORT=4000
-nssm start facturation
+$action  = New-ScheduledTaskAction -Execute "C:\Program Files\nodejs\node.exe" `
+             -Argument "server.js" `
+             -WorkingDirectory "C:\Projets\automatisation-facturation\facturation-app"
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User "Service-Excel"
+$set     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+             -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 `
+             -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+Register-ScheduledTask -TaskName "facturation" -Action $action -Trigger $trigger `
+  -Settings $set -User "Service-Excel" -RunLevel Limited
 ```
 
-> ⚠️ Rappel : le service tourne sous le **compte à session interactive** défini
-> au §1.a, jamais sous `LocalSystem`.
+- `-RunLevel Limited` : l'app n'a besoin d'aucun privilège. Surtout pas `Highest`.
+- `-ExecutionTimeLimit 0` : sans quoi la tâche serait tuée au bout de 3 jours.
+- **« N'exécuter que si l'utilisateur est connecté »** doit rester actif : c'est
+  ce réglage qui garantit la session interactive.
+- Pas de `PYTHONPATH` à poser : la tâche hérite de l'environnement de la
+  session, donc `%APPDATA%` est correct et `pywin32` est trouvé même quand il
+  est installé dans le profil (`pip install --user`).
+
+Contrepartie : l'app ne démarre qu'après l'autologon, soit quelques secondes de
+plus après un redémarrage. Sans conséquence pour un usage humain.
+
+**Vérification après redémarrage :**
+
+```powershell
+Get-ScheduledTask facturation | Get-ScheduledTaskInfo
+Get-NetTCPConnection -LocalPort 4000 -State Listen
+```
+
+`LastTaskResult = 267011` (`0x41303`, *task has not run*) n'est pas une erreur :
+c'est l'état normal tant qu'aucune ouverture de session n'a eu lieu depuis
+l'enregistrement. `267009` signifie que la tâche est en cours d'exécution.
+
+> ⚠️ L'autologon est le préalable : sans lui, aucune session ne s'ouvre au
+> démarrage, la tâche ne se déclenche jamais et l'app ne démarre pas. Vérifier
+> `AutoAdminLogon = 1` et `DefaultUserName = Service-Excel` sous
+> `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon`.
 
 > 🪤 `server.js` **auto-incrémente le port** si celui-ci est occupé (jusqu'à
 > +10, cf. `start()` en fin de fichier). Pratique en développement, piège en
@@ -272,14 +313,14 @@ le seul test qui valide aussi les timeouts).
 
 | Symptôme | Première chose à vérifier |
 |---|---|
-| **502 Bad Gateway** | Le service Windows tourne-t-il ? Règle de pare-feu §5 trop stricte ? |
+| **502 Bad Gateway** | La tâche `facturation` tourne-t-elle ? Autologon actif ? Règle de pare-feu §5 trop stricte ? |
 | **500 au lieu du login** | Provider non rattaché à l'outpost (`AUTHENTIK.md` §3) |
 | **504 après ~60 s** | Timeout NPM non relevé (§4) — nginx seul ne suffit pas |
 | **413 à l'envoi des factures** | `client_max_body_size` absent côté NPM (§4) |
 | **On entre sans mot de passe** | Pare-feu Windows §5 absent, ou accès direct au `:4000` |
 | **N'importe qui entre après login** | Aucun *Group binding* sur l'application |
 | **« fichier ouvert dans Excel »** | Process `EXCEL.EXE` orphelin sur la VM Windows |
-| **502 alors que le service tourne** | Port auto-incrémenté : l'app écoute sur 4001+ et non 4000 (§1.c) |
+| **502 alors que la tâche tourne** | Port auto-incrémenté : l'app écoute sur 4001+ et non 4000 (§1.c) |
 | **Génération qui ne finit jamais, sans erreur** | Excel en mode protégé : emplacement non approuvé pour le compte de service (§1.d) |
 | **`FileNotFoundError` sur un modèle** | Dépôt cloné ailleurs que `C:\Projets\automatisation-facturation` (§1.d) |
 
