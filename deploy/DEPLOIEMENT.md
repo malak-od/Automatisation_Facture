@@ -294,8 +294,13 @@ Voir `authentik/AUTHENTIK.md` — Proxy Provider `facturation-web` en mode
 curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.5.74:4000/api/carriers   # 200
 
 # 🐧 VM .200 — l'outpost Authentik répond (401 SANS cookie = correct)
+# Les 3 en-tetes X-* sont indispensables : sans X-Original-URL l'outpost renvoie
+# 500 meme quand tout est correct (cf. AUTHENTIK.md §6).
 curl -sk -o /dev/null -w "%{http_code}\n" \
   -H "Host: facturation.intra.laruche-logistique-france.fr" \
+  -H "X-Original-URL: https://facturation.intra.laruche-logistique-france.fr/" \
+  -H "X-Forwarded-Proto: https" \
+  -H "X-Forwarded-Host: facturation.intra.laruche-logistique-france.fr" \
   https://192.168.5.55:9443/outpost.goauthentik.io/auth/nginx                     # 401
 
 # 🐧 VM .200 — nginx redirige bien vers le SSO au lieu de servir l'app

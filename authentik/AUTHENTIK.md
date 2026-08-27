@@ -135,12 +135,23 @@ Ni l'une ni l'autre ne demande de changement d'infrastructure.
 # 🐧 VM APP (192.168.5.200) — l'outpost répond (401 attendu SANS cookie)
 curl -sk -o /dev/null -w "%{http_code}\n" \
   -H "Host: facturation.intra.laruche-logistique-france.fr" \
+  -H "X-Original-URL: https://facturation.intra.laruche-logistique-france.fr/" \
+  -H "X-Forwarded-Proto: https" \
+  -H "X-Forwarded-Host: facturation.intra.laruche-logistique-france.fr" \
   https://192.168.5.55:9443/outpost.goauthentik.io/auth/nginx
 # -> 401 = provider trouvé, outpost OK (c'est le bon résultat)
 # -> 404 = provider non rattaché à l'outpost (§3) ou External host erroné (§1)
 # -> connexion refusée = port 9443 fermé depuis la VM : essayer le port 9000
 #    (HTTP) et ajuster le proxy_pass de deploy/nginx-facturation.conf
 ```
+
+> 🪤 **Les trois en-têtes `X-*` ne sont pas décoratifs.** Sans `X-Original-URL`,
+> l'outpost ne peut pas reconstituer la requête d'origine et répond **`500`** —
+> y compris sur une configuration parfaitement saine (constaté en août 2026 sur
+> ce montage). Un `curl` réduit au seul `Host:` fait donc croire à une panne
+> qui n'existe pas. nginx, lui, envoie bien ces en-têtes : c'est le
+> `proxy_set_header X-Original-URL` du `location /outpost.goauthentik.io` dans
+> `deploy/nginx-facturation.conf`.
 
 Puis, en **navigation privée**, ouvrir
 `https://facturation.intra.laruche-logistique-france.fr` :
