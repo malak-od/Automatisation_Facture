@@ -117,8 +117,13 @@ def main():
         sys.stdout.write("  Calculate       : %6.1f s\n" % t_calc)
         sys.stdout.write("  TOTAL           : %6.1f s\n" % (t_start + t_open + t_refresh + t_calc))
         sys.stdout.write("\nTOUT EST OK -- l'automatisation Excel fonctionne sur cette machine.\n")
-        sys.stdout.write("Ce total est le pire cas du parc : il sert de reference pour les\n")
-        sys.stdout.write("timeouts (900 s cote nginx ET cote NPM) et pour dimensionner les vCPU.\n")
+        sys.stdout.write("\nATTENTION : ce total est un PLANCHER, pas le pire cas. Le classeur est\n")
+        sys.stdout.write("ouvert en lecture seule sans rien y ecrire, donc Calculate() n'a aucune\n")
+        sys.stdout.write("formule a reevaluer (valeurs en cache) -- d'ou un temps souvent nul.\n")
+        sys.stdout.write("Une generation reelle ecrit des milliers de lignes PUIS recalcule les\n")
+        sys.stdout.write("~200 000 XLOOKUP d'UPS : compter nettement plus long. Ce test valide la\n")
+        sys.stdout.write("mecanique COM, pas la duree. Pour calibrer les timeouts (900 s cote\n")
+        sys.stdout.write("nginx ET cote NPM) et les vCPU, mesurer une generation complete via l'app.\n")
     except SystemExit:
         raise
     except Exception as e:
