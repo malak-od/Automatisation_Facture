@@ -47,7 +47,7 @@ sont la première cause de configuration introuvable six mois plus tard.
 | Enregistrement DNS | 🛜 UniFi | hôte `facturation` dans `intra.laruche-logistique-france.fr` → `192.168.5.11` |
 | Proxy Host | 🔀 NPM | `facturation.intra.laruche-logistique-france.fr` → `192.168.5.74:4000` |
 | Forward-auth | 🔀 NPM | onglet **Advanced** du Proxy Host — référence : `deploy/npm-facturation-advanced.conf` |
-| Règles pare-feu | 🪟 VM app | `facturation - nginx uniquement` (autorise `.11`) · `facturation - blocage direct` |
+| Règle pare-feu | 🪟 VM app | `facturation - nginx uniquement` — **Allow** depuis `.11`, seule (§5) |
 | Provider | 🔑 Authentik | `facturation-web` |
 | Application (slug) | 🔑 Authentik | `facturation` |
 | Groupes | 🔑 Authentik | `facturation-administrateur` · `facturation-operateur` |
@@ -281,17 +281,63 @@ soi-même les en-têtes `X-authentik-*`. **Ce n'est pas théorique** : constaté
 août 2026 depuis un poste utilisateur, `HTTP 200` sans la moindre
 identification, avant la pose de ces règles.
 
+### a. Vérifier que le pare-feu est actif — il ne l'était pas
+
+Sur cette VM, les trois profils étaient à `Enabled: False` à la livraison (août
+2026). Les règles existaient et paraissaient correctes, mais **aucun filtrage
+n'avait lieu** : le port 4000 restait joignable depuis tout le réseau.
+
+```powershell
+Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction
+```
+
+### b. ⚠️ Protéger l'accès RDP AVANT d'activer le pare-feu
+
+Le RDP de cette VM est sur le port **2547**, pas 3389 : les règles intégrées
+« Bureau à distance » de Windows **ne le couvrent pas**. Activer le pare-feu
+sans règle pour 2547 coupe la session en cours et interdit toute reconnexion.
+
+```powershell
+Get-NetFirewallPortFilter | Where-Object LocalPort -eq 2547 |
+  Get-NetFirewallRule | Select-Object DisplayName, Enabled, Action, Direction
+# si rien ne sort :
+New-NetFirewallRule -DisplayName "RDP 2547 - administration" `
+  -Direction Inbound -Protocol TCP -LocalPort 2547 -Action Allow
+```
+
+### c. Une seule règle, en `Allow`
+
 ```powershell
 New-NetFirewallRule -DisplayName "facturation - nginx uniquement" `
   -Direction Inbound -Protocol TCP -LocalPort 4000 -Action Allow `
   -RemoteAddress 192.168.5.11
-New-NetFirewallRule -DisplayName "facturation - blocage direct" `
-  -Direction Inbound -Protocol TCP -LocalPort 4000 -Action Block
+
+Set-NetFirewallProfile -Profile Domain,Private,Public -DefaultInboundAction Block
+Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True
 ```
 
 `192.168.5.11` est l'IP de NPM : c'est le **seul** client légitime du port 4000.
 Les tests locaux sur la VM (`http://localhost:4000`) ne traversent pas le
 pare-feu entrant et continuent de fonctionner.
+
+> 🪤 **Ne pas ajouter de règle `Block` sur le port 4000.** Sous Windows, une
+> règle `Block` l'emporte **toujours** sur une règle `Allow` : elle bloquerait
+> aussi NPM, et l'app renverrait `502` une fois l'utilisateur authentifié. Elle
+> est de toute façon inutile — `DefaultInboundAction Block` couvre déjà tout ce
+> qui n'est pas explicitement autorisé. Une telle règle a existé ici et a été
+> supprimée.
+
+### d. Vérifier depuis un poste utilisateur, pas depuis la VM
+
+```powershell
+Test-NetConnection 192.168.5.74 -Port 4000    # TcpTestSucceeded doit valoir False
+```
+
+> Ouvrir `https://facturation.intra…` et obtenir un `302` vers le SSO **ne
+> prouve rien** sur ce point : ce `302` est émis par NPM sur l'échec
+> d'`auth_request`, sans qu'il ait eu besoin d'atteindre l'app. Seule une
+> identification complète suivie de l'affichage de l'interface prouve que NPM
+> traverse le pare-feu.
 
 Variante plus sûre si l'app n'a rien à faire du reste du réseau : la faire
 écouter uniquement en local (`HOST=127.0.0.1`) et poser un tunnel — mais en
@@ -340,7 +386,8 @@ le seul test qui valide aussi les timeouts).
 | **500 au lieu du login** | Provider non rattaché à l'outpost (`AUTHENTIK.md` §3) |
 | **504 après ~60 s** | Timeout NPM non relevé (§4) — nginx seul ne suffit pas |
 | **413 à l'envoi des factures** | `client_max_body_size` absent côté NPM (§4) |
-| **On entre sans mot de passe** | Pare-feu Windows §5 absent, ou accès direct au `:4000` |
+| **On entre sans mot de passe** | Pare-feu Windows **désactivé** (§5.a) ou règle `.11` absente — vérifier depuis un poste utilisateur, pas depuis la VM |
+| **502 après authentification** | Règle `Block` sur le 4000 : elle l'emporte sur l'`Allow` et bloque NPM (§5.c) |
 | **N'importe qui entre après login** | Aucun *Group binding* sur l'application |
 | **« fichier ouvert dans Excel »** | Process `EXCEL.EXE` orphelin sur la VM Windows |
 | **502 alors que la tâche tourne** | Port auto-incrémenté : l'app écoute sur 4001+ et non 4000 (§1.c) |
