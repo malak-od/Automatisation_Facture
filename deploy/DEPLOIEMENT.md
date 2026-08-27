@@ -79,10 +79,10 @@ facturation ne dépend plus d'un poste que quelqu'un peut éteindre ou déplacer
 |---|---|
 | Nom | `facturation-app` |
 | IP | **`192.168.5.74`** — fixe, dans `192.168.5.0/24` |
-| OS | Windows Server ou Windows 11 Pro |
+| OS | **Windows Server 2025** — édition **Desktop Experience** obligatoire (Excel ne s'installe pas sur Server Core) |
 | Accès admin | **RDP sur le port `2547`**, pas le `3389` — NLA activé |
-| Excel | **installé et sous licence sur la VM** — c'est lui qui recalcule les TCD (§9) |
-| Ressources | Excel COM est monothread et gourmand : 4 vCPU / 8 Go de RAM est un plancher réaliste |
+| Excel | **Office LTSC 2024**, licence en volume — c'est lui qui recalcule les TCD (§9). À préférer à M365 Apps, qui exigerait l'activation par ordinateur partagé et le rôle RDS |
+| Ressources | **8 vCPU / 16 Go** recommandés ; 4 vCPU / 8 Go est un plancher. Le modèle UPS porte **201 793 formules `XLOOKUP`** (47 Mo) et Colissimo 113 928 : le moteur de calcul d'Excel est **multithread**, donc les cœurs réduisent directement la durée de génération |
 
 > ⚠️ **La contrainte qui structure tout le reste : COM exige une session
 > Windows interactive.** Excel refuse de démarrer sans profil utilisateur, donc
@@ -91,6 +91,13 @@ facturation ne dépend plus d'un poste que quelqu'un peut éteindre ou déplacer
 > fragile du montage — et la raison pour laquelle Microsoft ne supporte pas
 > officiellement l'automatisation Office côté serveur. En pratique cela tourne,
 > à condition de surveiller les `EXCEL.EXE` orphelins (§8).
+
+> ✅ **Compatibilité des modèles avec LTSC 2024, vérifiée en août 2026.** Les 12
+> classeurs n'emploient que deux fonctions modernes — `XLOOKUP` (11 modèles) et
+> `_xlws.FILTER` (UPS) — toutes deux présentes depuis LTSC 2021. Aucune fonction
+> réservée à M365 (`GROUPBY`, `PIVOTBY`, fonctions regex…), donc aucun risque de
+> `#NOM?` silencieux dans une facture. À refaire si un modèle est remplacé par
+> une version retravaillée sur un poste sous M365.
 
 ### b. Prérequis logiciels
 
