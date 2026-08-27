@@ -291,6 +291,22 @@ n'avait lieu** : le port 4000 restait joignable depuis tout le réseau.
 Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction
 ```
 
+Vérifié en août 2026 : la machine est en **groupe de travail** (`WORKGROUP`,
+`PartOfDomain: False`) et aucune clé
+`HKLM\SOFTWARE\Policies\Microsoft\WindowsFirewall` n'existe. Aucune GPO ne
+peut donc redésactiver le pare-feu — l'activation tient. À revérifier si la VM
+est un jour jointe à un domaine, ou recréée depuis le gabarit d'origine, qui
+est vraisemblablement à l'origine de cet état :
+
+```powershell
+(Get-CimInstance Win32_ComputerSystem) | Select-Object Domain, PartOfDomain
+foreach ($p in @('Domain','Standard','Public')) {
+  $k = "HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\${p}Profile"
+  if (Test-Path $k) { "$p : GPO -> EnableFirewall = $((Get-ItemProperty $k).EnableFirewall)" }
+  else { "$p : aucune GPO" }
+}
+```
+
 ### b. ⚠️ Protéger l'accès RDP AVANT d'activer le pare-feu
 
 Le RDP de cette VM est sur le port **2547**, pas 3389 : les règles intégrées
