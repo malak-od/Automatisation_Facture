@@ -343,11 +343,39 @@ pare-feu entrant et continuent de fonctionner.
 > qui n'est pas explicitement autorisé. Une telle règle a existé ici et a été
 > supprimée.
 
-### d. Vérifier depuis un poste utilisateur, pas depuis la VM
+### d. Vérifier depuis l'extérieur, pas depuis la VM
+
+Deux points de mesure, le second étant le plus strict :
 
 ```powershell
+# 🪟 depuis un poste utilisateur (autre VLAN)
 Test-NetConnection 192.168.5.74 -Port 4000    # TcpTestSucceeded doit valoir False
 ```
+
+```bash
+# 🐧 depuis transport-app (192.168.5.200) — MEME VLAN que l'app
+curl -sS -m 5 -o /dev/null -w "%{http_code}\n" http://192.168.5.74:4000/api/carriers
+# -> "Connection timed out" attendu. Un 200 signifierait que la restriction de
+#    source ne s'applique pas, et que tout le VLAN serveurs atteint l'app.
+```
+
+Le test intra-VLAN est le seul qui prouve la restriction de source : un poste
+d'un autre VLAN pourrait être bloqué par le routage plutôt que par le pare-feu.
+Les deux répondaient correctement en août 2026, avec l'inventaire suivant :
+
+```powershell
+Get-NetFirewallPortFilter | Where-Object LocalPort -eq 4000 |
+  Get-NetFirewallRule | ForEach-Object {
+    [PSCustomObject]@{ Nom = $_.DisplayName; Actif = $_.Enabled; Action = $_.Action
+                       Distant = ($_ | Get-NetFirewallAddressFilter).RemoteAddress } }
+# -> UNE seule ligne : facturation - nginx uniquement / Allow / 192.168.5.11
+#    Toute autre regle Allow sur ce port est un trou.
+```
+
+L'activation du pare-feu a par ailleurs refermé bien plus que le port
+applicatif : RPC (135), NetBIOS (139), SMB (445) et WinRM (5985/5986) étaient
+joignables depuis le réseau et ne le sont plus. Seul le RDP `2547` reste ouvert,
+sans restriction de source — c'est la principale surface résiduelle.
 
 > Ouvrir `https://facturation.intra…` et obtenir un `302` vers le SSO **ne
 > prouve rien** sur ce point : ce `302` est émis par NPM sur l'échec
