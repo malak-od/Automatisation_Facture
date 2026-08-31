@@ -56,6 +56,10 @@ def pdf_taxables(pdf_paths):
     try:
         import pypdf
     except ImportError:
+        # BUG TROUVE 2026-08-27 : echec silencieux (juste une liste vide, TCD reste vide sans
+        # aucune explication) si pypdf n'est pas installe -- constate sur la VM prod, ou
+        # requirements.txt ne listait pas cette dependance (utilisee par 11/12 finaliseurs).
+        print("AVERTISSEMENT: module 'pypdf' introuvable -- reconciliation PDF (TCD) impossible. Installer via 'pip install -r Automatisation/requirements.txt'.")
         return []
     out = []
     for p in pdf_paths:

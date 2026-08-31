@@ -1,0 +1,11 @@
+node_modules/
+uploads/
+outputs/
+out/
+server.log
+*.log
+*.csv
+
+# Identifiants API (UPS OAuth2 Client ID/Secret, etc.) -- jamais commites.
+.env
+.env.*

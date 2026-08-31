@@ -88,7 +88,8 @@
 const path = require('path');
 const { num, round2, roundUp1 } = require('../../core/csv');
 const { validate } = require('../../core/validate');
-const { readBrutRows, epParTrackingFromExport } = require('../../core/exportBrut');
+const { readBrutRows, epParTrackingFromExport, poidsParTrackingFromExport } = require('../../core/exportBrut');
+const upsApi = require('../../core/upsApi');
 const cfg = require('./config.json');
 
 // Positions CSV brut (1-based, converties en 0-based) -- decalage CONFIRME -4 vs Facture UPS
@@ -111,6 +112,13 @@ const COL = {
   valeurBase: 53 - 4 - 1,      // Facture UPS BA (53) "Valeur de base"
   montantNet: 57 - 4 - 1,      // Facture UPS BE (57) "Montant net"
   pays: 86 - 4 - 1,            // Facture UPS CH (86) "Pays" (en-tete natif UPS trompeur "Ville de l'acheteur")
+  // "Poids facture"=0 sur les lignes d'AJUSTEMENT/correction (codeClasse=ACC, ex. "Frais de
+  // correction d'expedition") -- confirme sur reel juillet 2026 (tracking 1ZA1912WD998484245,
+  // verifie contre le site UPS : poids reel affiche = 43,70 KGS). Le vrai poids est ecrit en
+  // texte libre dans cette colonne, format "AUDITED WEIGHT: 43.5 KGS" (colonne voisine
+  // "ENTERED WEIGHT: ..." = poids initialement declare, avant correction UPS -- jamais utilisee,
+  // seul le poids AUDITE fait foi). Position confirmee empiriquement (index brut 175).
+  auditedWeight: 180 - 4 - 1,
 };
 
 function normalizeCompte(c) {
@@ -149,6 +157,24 @@ function categoriePour(codeDescription) {
   const key = String(codeDescription || '').trim().toUpperCase();
   if (!key) return null;
   return cfg.categories[key] || 'CODE INCONNU';
+}
+
+/** Trie les chemins d'export "expeditions_brut" du plus RECENT au plus ANCIEN, d'apres l'annee/
+ * mois dans le nom de fichier ORIGINAL ("AAAA MM - Export expeditions_brut.xlsx") -- le repli
+ * Poids (poidsExportMap) retient le premier fichier trouve pour un tracking, donc l'ordre doit
+ * etre fiable (confirme video : mois courant -> M-1 -> M-2, PAS l'ordre de depot par
+ * l'utilisateur, qui peut se tromper). Un fichier dont le nom ne matche pas le format attendu
+ * est laisse a la fin (ordre d'origine entre eux), pas exclu -- reste utilisable, juste non
+ * priorise avec certitude. */
+function sortBrutPathsByMonthDesc(brutPaths, brutNames) {
+  if (!brutNames || !brutNames.length) return brutPaths;
+  const withMonth = brutPaths.map((p, i) => {
+    const name = brutNames[i] || '';
+    const m = /^(\d{4})[ _](\d{2})\b/.exec(name);
+    return { p, key: m ? Number(m[1]) * 100 + Number(m[2]) : -1, i };
+  });
+  withMonth.sort((a, b) => (b.key - a.key) || (a.i - b.i));
+  return withMonth.map((x) => x.p);
 }
 
 /** Poids UPS vs UPS_COD (formule modele 'zone colis poids assurance'!I/J). */
@@ -307,7 +333,7 @@ async function process(files, opts) {
     const tracking = String(r[COL.numeroSuivi] || '').trim();
     if (!tracking || demandesAvoir1Z79.has(tracking)) continue;
     if (!parTracking.has(tracking)) {
-      parTracking.set(tracking, { postes: {}, zone: 0, nbColis: 0, poids: 0, assurance: 0, compte: '', compteBrut: '', pays: '', mode: '', aLigneFret: false });
+      parTracking.set(tracking, { postes: {}, zone: 0, nbColis: 0, poids: 0, poidsAudite: 0, assurance: 0, compte: '', compteBrut: '', pays: '', mode: '', aLigneFret: false });
     }
     const acc = parTracking.get(tracking);
 
@@ -353,6 +379,15 @@ async function process(files, opts) {
     if (nbColisLigne > acc.nbColis) acc.nbColis = nbColisLigne;
     const poidsLigne = num(r[COL.poidsFacture]);
     if (poidsLigne > acc.poids) acc.poids = poidsLigne;
+    // Poids AUDITE UPS (ligne d'ajustement/correction, "Poids facture"=0 mais vrai poids ecrit
+    // en texte libre "AUDITED WEIGHT: X KGS") -- confirme sur reel juillet 2026 : 93/112 lignes
+    // a Poids=0 avaient ce texte, poids conforme au site UPS (billing/tracking). Priorite sur le
+    // repli export brut plus bas (source la plus proche : UPS lui-meme, deja dans ce fichier).
+    const mAudited = /AUDITED WEIGHT:\s*([\d.,]+)\s*KGS/i.exec(String(r[COL.auditedWeight] || ''));
+    if (mAudited) {
+      const poidsAudite = num(mAudited[1].replace(',', '.'));
+      if (poidsAudite > acc.poidsAudite) acc.poidsAudite = poidsAudite;
+    }
     if (!acc.compte) acc.compte = normalizeCompte(tracking.slice(2, 8));
     // Compte BRUT (colonne "Numero de compte" du CSV, ex. "0000A1912W") : repli si la
     // derivation depuis le tracking (formule modele RIGHT(LEFT(tracking,8),6)) echoue --
@@ -379,17 +414,59 @@ async function process(files, opts) {
     }
   }
 
-  // Export (E/P) : upload manuel OBLIGATOIRE -- demande utilisateur 2026-08-25, remplace le
-  // repli automatique sur un chemin fixe du serveur (Automatisation/AAAA MM - Export
-  // expeditions_brut.xlsx), qui ne survivrait pas a un deploiement sur un autre poste/serveur.
-  const brutPaths = files.brut || [];
-  const epMap = brutPaths.length ? epParTrackingFromExport(readBrutRows(brutPaths)) : new Map();
+  // Export (E/P + repli Poids) : upload manuel OBLIGATOIRE -- demande utilisateur 2026-08-25,
+  // remplace le repli automatique sur un chemin fixe du serveur (Automatisation/AAAA MM -
+  // Export expeditions_brut.xlsx), qui ne survivrait pas a un deploiement sur un autre poste/
+  // serveur. Le meme upload sert aussi de repli Poids -- confirme par la video process
+  // "UPS_Preparation fichier import.mp4" (2026-08-27) : quand Poids=0 dans le CSV Billing UPS,
+  // le pole transport RECHERCHEX le tracking dans ce meme export (colonne PRO_TRACKING -> poids
+  // ERP), en CASCADE SUR 3 MOIS -- mois courant, puis M-1, puis M-2 (confirme a l'ecran 27:06 :
+  // repli jusqu'a mars pour une facture de mai) -- d'ou le libelle d'upload demandant les 3
+  // fichiers dans cet ordre. poidsParTrackingFromExport() deja utilisee pour GLS/DPD applique
+  // exactement cette cascade (premier fichier de brutPaths trouve gagne, ne retient que
+  // poids>0) : fonctionne pour N fichiers, pas seulement 2, tant qu'ils sont deposes dans
+  // l'ordre mois courant -> plus ancien. Le residu non resolu (tracking absent de tous les
+  // exports fournis, cas atypique repris manuellement sur la facture PDF UPS dans la video)
+  // reste a 0 -> alerte "POIDS = 0" existante (validate.js), signalee pour verification/saisie
+  // manuelle, pas invente ici.
+  const brutPaths = sortBrutPathsByMonthDesc(files.brut || [], opts && opts.fileNames && opts.fileNames.brut);
+  const brutRows = brutPaths.length ? readBrutRows(brutPaths) : [];
+  const epMap = brutPaths.length ? epParTrackingFromExport(brutRows) : new Map();
+  const poidsExportMap = brutPaths.length ? poidsParTrackingFromExport(brutRows) : new Map();
   if (!brutPaths.length) warnings.push("Export WMS 'expéditions_brut' introuvable pour ce mois (E/P) — toutes les lignes sans correspondance seront classées 'P' par défaut (sauf plus-value BtoC détectée, qui force 'P').");
 
   const recs = [];
   let nEpDefaut = 0;
+  let nPoidsRepliAudite = 0;
+  let nPoidsRepliExport = 0;
+  let nPoidsRepliApi = 0;
+  const upsApiConfigured = upsApi.isConfigured();
+  if (upsApiConfigured) infos.push(`API UPS activée (compte API "L-A1912W") — repli automatique du poids pour les trackings encore non résolus après l'export WMS.`);
   for (const [tracking, acc] of parTracking) {
-    const poidsArr = poidsArrondi(acc.transporteur, acc.nbColis, acc.poids);
+    let poidsSource = acc.poids;
+    // Priorite 1 : poids AUDITE UPS ("AUDITED WEIGHT: X KGS" en texte sur une ligne
+    // d'ajustement/correction) -- source la plus fiable (UPS lui-meme, deja dans ce fichier,
+    // confirme contre le site UPS reel). Priorite 2 (si absent) : repli export brut WMS.
+    if (!poidsSource && acc.poidsAudite) { poidsSource = acc.poidsAudite; nPoidsRepliAudite++; }
+    if (!poidsSource) {
+      const poidsRepli = poidsExportMap.get(tracking);
+      if (poidsRepli) { poidsSource = poidsRepli; nPoidsRepliExport++; }
+    }
+    // Priorite 3 : API UPS Tracking (repli DERNIER RECOURS, uniquement si les 2 sources
+    // precedentes ont echoue -- volume faible, confirme reel juillet 2026 : ~19/6912 lignes).
+    // Remplace la verification manuelle sur billing.ups.com/ups.com/track vue dans la video
+    // process "UPS_Preparation fichier import.mp4" (2026-08-27). Jamais bloquant : si l'API
+    // n'est pas configuree (.env) ou echoue reseau, le poids reste a 0 comme avant -> alerte
+    // "POIDS = 0" existante (validate.js), pas de casse silencieuse.
+    if (!poidsSource && upsApiConfigured) {
+      try {
+        const poidsApi = await upsApi.poidsParTrackingViaApi(tracking);
+        if (poidsApi) { poidsSource = poidsApi; nPoidsRepliApi++; }
+      } catch (e) {
+        warnings.push(`Tracking ${tracking} : appel API UPS échoué pour récupérer le poids (${String(e.message || e).slice(0, 150)}) — POIDS resté à 0, à vérifier manuellement.`);
+      }
+    }
+    const poidsArr = poidsArrondi(acc.transporteur, acc.nbColis, poidsSource);
     const fret = acc.postes['Frêt'] || 0;
     const droitsTaxes = acc.postes['Droits et taxes'] || 0;
     const colisVolumineux = colisVolumineuxMontant(acc.postes['Colis volumineux'] || 0);
@@ -431,6 +508,9 @@ async function process(files, opts) {
     });
   }
   if (nEpDefaut) infos.push(`${nEpDefaut} ligne(s) sans correspondance dans l'export WMS (E/P) ni plus-value BtoC détectée — classée(s) 'P' par défaut.`);
+  if (nPoidsRepliAudite) infos.push(`${nPoidsRepliAudite} ligne(s) à Poids = 0 complétée(s) avec le poids audité par UPS (ligne d'ajustement/correction "AUDITED WEIGHT" dans la facture) — poids réel confirmé par UPS lui-même.`);
+  if (nPoidsRepliExport) infos.push(`${nPoidsRepliExport} ligne(s) à Poids = 0 dans la facture UPS complétée(s) via l'export WMS 'expéditions_brut' (repli automatique, comme fait manuellement par le pôle transport).`);
+  if (nPoidsRepliApi) infos.push(`${nPoidsRepliApi} ligne(s) à Poids = 0 complétée(s) via l'API UPS Tracking (dernier recours, remplace la vérification manuelle sur billing.ups.com/ups.com/track).`);
 
   // Trackings SANS AUCUNE charge facturable (tous postes ERP a 0 -- typiquement une ligne
   // "INF"/"Retours indelivrable" isolee, sans ligne FRT ni aucun autre poste) : EXCLUS de
@@ -502,8 +582,19 @@ async function process(files, opts) {
  * FedEx/Delivengo/Colissimo. BUG TROUVE 2026-08-26 : period n'etait jamais transmis au
  * finaliseur ("Date validite tarif" retombait sur l'auto-detection interne peu fiable, meme
  * bug deja corrige cote carrier Node process() mais pas cote finaliseur Python). */
-function computeFinalizerArgs(files, period) {
-  return ['--csv', ...(files.csv || []), '--brut', ...(files.brut || []), ...(period ? ['--period', period] : [])];
+function computeFinalizerArgs(files, period, _appRoot, fileNames) {
+  // Tri des exports brut par mois decroissant AVANT de les passer au finaliseur Python --
+  // BUG TROUVE 2026-08-27 : le tri deja fait dans process() (sortBrutPathsByMonthDesc) ne
+  // s'appliquait jamais au fichier reellement livre, car UPS utilise importFromWorkbook=true
+  // (le CSV final vient du classeur Excel genere par ce meme finaliseur, pas du calcul JS).
+  const brutSorted = sortBrutPathsByMonthDesc(files.brut || [], fileNames && fileNames.brut);
+  const importM1 = (files.importM1 || [])[0];
+  return [
+    '--csv', ...(files.csv || []),
+    '--brut', ...brutSorted,
+    ...(importM1 ? ['--import-m1', importM1] : []),
+    ...(period ? ['--period', period] : []),
+  ];
 }
 
 module.exports = {
@@ -515,7 +606,8 @@ module.exports = {
   method: "Fichiers CSV Billing UPS (sans en-tete, colonnes resolues par position). Transporteur UPS/UPS_COD via compte extrait du tracking. Categorie ERP via cascade code classe (FRT/TAX) puis table Charge.CHG_CODE (472 codes). Zone FOURNIE par UPS (pas calculee). Poids/Colis volumineux/Assurance via formules modele exactes (baremes/plafonds). E/P via export WMS m/m-1, plus-value BtoC force 'P'. Colis 1Z79 exclus (demande d'avoir).",
   inputs: [
     { key: 'csv', label: 'Factures UPS Billing (CSV, 1 par facture)', accept: '.csv', multiple: true, required: true },
-    { key: 'brut', label: 'Export des expéditions brutes (et mois précédent si dispo)', accept: '.xlsx,.xls', multiple: true, required: true },
+    { key: 'brut', label: 'Export des expéditions brutes (mois courant + M-1 + M-2 si dispo, dans cet ordre)', accept: '.xlsx,.xls', multiple: true, required: true },
+    { key: 'importM1', label: 'Fichier import CSV du mois précédent (repli Zone quand Zone=0 sans frêt)', accept: '.csv', multiple: false, required: false },
   ],
   outputNaming: { workbook: '{period}_Facture UPS', import: '{period}_UPS_Import' },
   // Le fichier import CSV/XLSX est reconstruit depuis les valeurs REELLEMENT calculees par
@@ -527,7 +619,7 @@ module.exports = {
   finalizer: {
     script: '../automatisation/finaliser_ups.py',
     template: '../Transporteurs/UPS/2026_06_Facture UPS.xlsx',
-    buildArgs: (files, period) => computeFinalizerArgs(files, period),
+    buildArgs: (files, period, appRoot, fileNames) => computeFinalizerArgs(files, period, appRoot, fileNames),
   },
   process,
 };
