@@ -112,4 +112,5 @@ Statut : tous les transporteurs listés sont opérationnels (`ready`), sauf ment
 
 - Chaque transporteur a été validé sur un ou plusieurs mois réels, avec un niveau de confiance variable (validation humaine par l'équipe métier vs. comparaison automatique exhaustive contre un fichier déjà livré).
 - Certains écarts résiduels mineurs, déjà investigués et documentés, restent volontairement non corrigés lorsqu'ils sont jugés non significatifs (montant négligeable, cas isolé).
-- L'application traite un mois à la fois, en local — pas encore d'environnement de production partagé (API/base de données/déploiement centralisé).
+- L'application traite un mois à la fois, en local — pas encore de base de données ni d'environnement de production partagé/centralisé (une branche `prod` dédiée existe, avec un process de déploiement documenté pour une VM Windows, mais chaque instance reste indépendante).
+- UPS est le seul transporteur à appeler une API externe en direct (API UPS Tracking, en tout dernier recours du repli poids/colis, après le texte audité et l'export WMS partagé) — nécessite des identifiants `UPS_CLIENT_ID`/`UPS_CLIENT_SECRET` et un accès réseau sortant vers `onlinetools.ups.com`, absents pour tous les autres transporteurs.
