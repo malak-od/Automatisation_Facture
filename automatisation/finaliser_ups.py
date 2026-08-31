@@ -39,10 +39,22 @@ Classeur reel :
     - "Fichier import" : formules PAR LIGNE completes (cf. carrier Node
       index.js pour le detail complet des 24 colonnes, notamment
       Transporteur=compte extrait du tracking via 'Comptes UPS', Zone=
-      FOURNIE par UPS (native, jamais calculee), E/P=cascade ERP/plus-
-      value BtoC, TVA=IF(TCD!N="",0,0.2) (poste TVA reel, PAS liste de
-      pays), Colis volumineux=bareme par palier sur TCD!H (poste ERP
-      MONTANT, PAS le poids -- piege deja documente).
+      FOURNIE par UPS (native XLOOKUP) SAUF regles CDC 2026-08-27
+      ci-dessous, E/P=cascade ERP/plus-value BtoC, TVA=IF(TCD!N="",0,0.2)
+      (poste TVA reel, PAS liste de pays -- deja naturellement 0 hors UE,
+      valide a posteriori en Python, jamais recalcule), Colis
+      volumineux=bareme par palier sur TCD!H (poste ERP MONTANT, PAS le
+      poids -- piege deja documente).
+      Regles Zone (CDC pole transport 2026-08-27, colonne M) : 1) Zone=0
+      interdite (garantie une fois le repli M-1 applique) ; 2) Zone=0 +
+      Fret 3-8EUR + Pays vide/FR -> "France" ; 3) Zone=0 sans fret ->
+      repli Python sur le fichier import CSV du mois precedent
+      (load_import_m1, champ upload dedie --import-m1) ; 4) plus-value
+      BtoC<2EUR + Zone="France" (hors WV5788) -> marqueur "A VERIFIER" ;
+      5) compte WV5788 (Verde Trad) -> Zone="France" + Mode envoi="ST"
+      forces (override absolu, colonnes M et P). Regles 6/7 (validation
+      croisee zoning UPS Pays->SV/ST, table PAYS_SV_ST) : alerte console
+      uniquement, ne modifie jamais Zone/Mode envoi.
 
 Colis 1Z79 (regle FACTURATION EXCEL.docx) : colis viticulteur retourne
   chez La Ruche -- EXCLUS de Facture UPS (jamais colles), a signaler pour
@@ -59,7 +71,7 @@ Necessite : Windows + Excel + pywin32.
 Usage :
   python finaliser_ups.py "<modele.xlsx>" "<sortie.xlsx>" --csv <csv1> [<csv2>...] [--brut <brutM.xlsx> [<brutM-1.xlsx>]]
 """
-import sys, os, shutil, re, csv
+import sys, os, shutil, re, csv, time
 
 
 def normalize_header(h):
@@ -105,6 +117,62 @@ COL = {
     "valeur_base": 53 - 4 - 1,
     "montant_net": 57 - 4 - 1,
     "pays": 86 - 4 - 1,
+    # "Poids facture"=0 sur les lignes d'AJUSTEMENT/correction (codeClasse=ACC, ex. "Frais de
+    # correction d'expedition") -- confirme sur reel juillet 2026 (tracking 1ZA1912WD998484245,
+    # verifie contre le site UPS). Le vrai poids est ecrit en texte libre dans cette colonne,
+    # format "AUDITED WEIGHT: 43.5 KGS" -- meme position que carriers/ups/index.js (COL.auditedWeight).
+    "audited_weight": 180 - 4 - 1,
+}
+
+# Table Pays -> Zone SV/ST fournie par le pole transport (2026-08-27), a comparer avec le
+# zoning 2026 UPS (Guide des Services Viticolis) -- USAGE VALIDATION UNIQUEMENT (cf. C.4
+# ci-dessous) : ne modifie JAMAIS Zone/Mode envoi calcules, sert seulement a alerter en
+# console si le calcul existant (XLOOKUP vers l'onglet "Zone" natif UPS) est incoherent avec
+# cette table. Forme : code -> (zones_sv possibles, zones_st possibles), chaque zone en
+# CHAINE (ex. US="9"/"10" -- garde eclate en valeurs separees, pas la chaine litterale "9-10",
+# pour accepter Zone=9 OU Zone=10 comme valides). Tuple vide = pas de valeur fournie ("vide").
+PAYS_SV_ST = {
+    "AT": (("6",), ("6",)),
+    "AU": ((), ()),
+    "BE": (("3",), ("4", "5")),
+    "BG": (("52",), ("71",)),
+    "CH": (("6",), ("8",)),
+    "CN": (("11",), ()),
+    "CZ": (("51",), ("61",)),
+    "DE": (("3",), ("4", "5", "6", "7")),
+    "DK": (("4",), ("6", "7")),
+    "ES": (("3",), ("4", "5", "6", "7")),
+    "FI": (("5",), ("7",)),
+    "GB": (("703",), ("704", "705", "706", "707")),
+    "GR": (("4",), ("71",)),
+    "HK": (("11",), ()),
+    "HR": (("51",), ("61",)),
+    "HU": (("51",), ("61",)),
+    "IE": (("4",), ("6", "7")),
+    "IT": (("3",), ("4", "5", "6", "7")),
+    "JP": (("11",), ()),
+    "KR": (("11",), ()),
+    "LT": (("52",), ("71",)),
+    "LU": (("3",), ("4", "5")),
+    "LV": (("52",), ("71",)),
+    "NL": (("3",), ("5", "6")),
+    "PL": (("51",), ("61",)),
+    "PT": (("5",), ("6", "7", "999")),
+    "RO": (("52",), ("71",)),
+    "SE": (("5",), ("7",)),
+    "SI": (("51",), ("61",)),
+    "SK": (("51",), ("61",)),
+    "TW": (("11",), ()),
+    "US": (("9", "10"), ()),
+    "VI": (("12",), ()),
+}
+
+# Sous-ensemble UE de PAYS_SV_ST (+FR, absent de la table car jamais recherche via XLOOKUP
+# 'Zone' -- deja code en dur "France" dans la formule Zone) -- utilise par la validation TVA
+# hors UE (point B) : TVA=0.2 calculee pour un pays absent de cet ensemble = suspect.
+PAYS_UE = {
+    "AT", "BE", "BG", "CZ", "DE", "DK", "ES", "FI", "GR", "HR", "HU", "IE", "IT",
+    "LT", "LU", "LV", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "FR",
 }
 
 
@@ -121,6 +189,10 @@ def load_config(carrier_dir):
         return json.load(f)
 
 
+# VESTIGE (2026-08-27) : aucun appel a cette fonction dans ce fichier -- le calcul REEL du
+# poids arrondi passe par les formules Excel natives 'zone colis poids assurance'!I/J (cf.
+# formulas_zcp, ~ligne 707). Conservee telle quelle (pas supprimee, risque de casser un appel
+# externe non detecte), mais ne pas s'y fier pour comprendre le comportement livre au client.
 def poids_arrondi(transporteur, nb_colis, poids):
     import math
     if transporteur == "UPS_COD":
@@ -150,25 +222,31 @@ def colis_volumineux_montant(montant_reel):
 
 
 def parse_args(argv):
-    """--csv <csv...> [--brut <xlsx...>] [--period AAAA_MM]"""
+    """--csv <csv...> [--brut <xlsx...>] [--import-m1 <csv>] [--period AAAA_MM]"""
     modele, sortie = argv[1], argv[2]
     csvs, brut, cur = [], [], None
     period = None
+    import_m1 = None
     for a in argv[3:]:
         if a == "--csv":
             cur = "c"
         elif a == "--brut":
             cur = "b"
+        elif a == "--import-m1":
+            cur = "m1"
         elif a == "--period":
             cur = "p"
         elif cur == "c":
             csvs.append(a)
         elif cur == "b":
             brut.append(a)
+        elif cur == "m1":
+            import_m1 = a
+            cur = None
         elif cur == "p":
             period = a
             cur = None
-    return modele, sortie, csvs, brut, period
+    return modele, sortie, csvs, brut, period, import_m1
 
 
 def load_brut_ep(brut_paths):
@@ -199,6 +277,187 @@ def load_brut_ep(brut_paths):
     return m
 
 
+def load_brut_poids_colis_pays(brut_paths):
+    """Maps {tracking -> poids}, {tracking -> nb_colis} et {tracking -> pays destinataire}
+    depuis l'export WMS partage -- meme mecanisme que load_brut_ep, colonnes
+    AI=INFO_POIDSRETENU(34), AH=INFO_NBCOLIS(33), AB=DES_PAYS(27), 0-based. Premier fichier
+    de brut_paths ayant une valeur pour ce tracking gagne -- brut_paths doit deja etre trie
+    mois courant -> plus ancien (fait cote carrier Node avant l'appel CLI, cf.
+    computeFinalizerArgs). Lecture fusionnee (poids+colis+pays en un seul passage par
+    fichier)."""
+    import io
+    import openpyxl
+    m_poids, m_colis, m_pays = {}, {}, {}
+    for p in [bp for bp in brut_paths if bp]:
+        with open(p, "rb") as f:
+            buf = io.BytesIO(f.read())
+        wb = openpyxl.load_workbook(buf, read_only=True)
+        ws = wb[wb.sheetnames[0]]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if len(row) > 41:
+                t = str(row[41] or "").strip()
+                if not t:
+                    continue
+                poids = num(row[34]) if row[34] not in (None, "") else 0
+                if poids > 0 and t not in m_poids:
+                    m_poids[t] = poids
+                colis = num(row[33]) if row[33] not in (None, "") else 0
+                if colis > 0 and t not in m_colis:
+                    m_colis[t] = colis
+                pays = str(row[27] or "").strip().upper() if len(row) > 27 else ""
+                if pays and t not in m_pays:
+                    m_pays[t] = pays
+        wb.close()
+    return m_poids, m_colis, m_pays
+
+
+def load_import_m1(path):
+    """Map {tracking -> zone} depuis le fichier import CSV FINAL du mois precedent (deja
+    livre a l'ERP -- format ecrit par writeImportCsv() cote Node : latin1, ';', decimale
+    virgule) -- meme mecanisme que le repli 'zone colis poids assurance' vu dans la video
+    process (RECHERCHEX vers 2026_04_UPS_Import.csv). Repli de dernier recours pour Zone=0
+    SANS fret (demande utilisateur 2026-08-27)."""
+    if not path:
+        return {}
+    m = {}
+    try:
+        with open(path, encoding="latin-1", newline="") as f:
+            rows = list(csv.reader(f, delimiter=";"))
+    except Exception as e:
+        print(f"AVERTISSEMENT: fichier import M-1 illisible ({e}) -- repli Zone (mois precedent) desactive.")
+        return {}
+    if not rows:
+        return {}
+    header = [normalize_header(h) for h in rows[0]]
+    try:
+        i_tracking = header.index("N° Tracking")
+        i_zone = header.index("Zone")
+    except ValueError:
+        print("AVERTISSEMENT: en-tetes 'N° Tracking'/'Zone' introuvables dans le fichier import M-1 -- repli desactive.")
+        return {}
+    for r in rows[1:]:
+        if len(r) <= max(i_tracking, i_zone):
+            continue
+        t = str(r[i_tracking] or "").strip()
+        zone = str(r[i_zone] or "").strip()
+        if t and zone and t not in m:
+            m[t] = zone
+    return m
+
+
+def poids_audite_de_ligne(r):
+    """Extrait le poids AUDITE UPS en texte libre ("AUDITED WEIGHT: X KGS") d'une ligne CSV
+    brute, ou None si absent -- meme regex que carriers/ups/index.js (COL.auditedWeight)."""
+    import re
+    raw = str(r[COL["audited_weight"]] if len(r) > COL["audited_weight"] else "") or ""
+    m = re.search(r"AUDITED WEIGHT:\s*([\d.,]+)\s*KGS", raw, re.IGNORECASE)
+    return num(m.group(1)) if m else None
+
+
+def poids_api_ups(tracking, cache):
+    """Poids (KGS) via l'API UPS Tracking -- garde de compatibilite, delegue a
+    donnees_api_ups() (cf. ci-dessous) qui recupere aussi le nombre de colis."""
+    return donnees_api_ups(tracking, cache)[0]
+
+
+def donnees_api_ups(tracking, cache):
+    """(poids KGS, nombre de colis) via l'API UPS Tracking (repli DERNIER RECOURS), avec cache
+    memoire pour eviter de rappeler l'API 2x pour le meme tracking. Chaque valeur est None si
+    absente/non trouvee. Ne leve jamais pour un cas normal (tracking introuvable/pas de donnee)
+    -- seules les erreurs reseau/auth sont juste averties en console (meme principe que
+    core/upsApi.js cote Node). AJOUT 2026-08-31 (packageCount) : confirme sur reponse API
+    reelle (tracking 1ZA1912WDK91200736, expedition '1 of 3 Piece Shipment' sur le site UPS,
+    packageCount=3 dans la reponse JSON) -- champ trackResponse.shipment[].package[].
+    packageCount, au niveau du PACKAGE (pas du shipment), ancien commentaire ('pas d'API
+    equivalente pour le nombre de colis') etait errone, jamais verifie empiriquement avant.
+
+    ATTENTION POIDS (verifie 2026-08-31, echantillon de 8 trackings multi-colis reels,
+    compare export brut WMS vs API) : sur un envoi groupe (plusieurs colis sous le meme
+    tracking), la reponse API ne contient QU'UN SEUL package (pas un par colis malgre
+    packageCount>1) et son "weight" est le poids d'UN SEUL colis du groupage, PAS le poids
+    total de l'expedition -- ex. tracking a 6 colis/105kg reel (WMS) -> API renvoie
+    packageCount=6 (correct) mais weight=19.00 (poids d'1 seul colis, PAS 105). Sur 8
+    trackings testes, seuls 2/8 (envois a 1 seul colis) avaient un poids API concordant
+    avec le WMS ; les 6 envois multi-colis divergeaient tous, l'API sous-evaluant
+    systematiquement. NE JAMAIS mettre l'API en PRIORITE sur le Poids (repli export brut en
+    premier reste correct, cf. cascade dans main()) -- packageCount (colis) est en revanche
+    fiable (8/8 concordant avec le WMS sur le meme echantillon), sans reserve connue a ce
+    jour."""
+    if tracking in cache:
+        return cache[tracking]
+    client_id = os.environ.get("UPS_CLIENT_ID")
+    client_secret = os.environ.get("UPS_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        cache[tracking] = (None, None)
+        return (None, None)
+    import base64
+    import json as _json
+    import urllib.request
+    import urllib.parse
+    import urllib.error
+    try:
+        token = donnees_api_ups._token
+    except AttributeError:
+        token = None
+    if not token:
+        try:
+            basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+            req = urllib.request.Request(
+                "https://onlinetools.ups.com/security/v1/oauth/token",
+                data=b"grant_type=client_credentials",
+                headers={"Authorization": f"Basic {basic}", "Content-Type": "application/x-www-form-urlencoded"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=8) as res:
+                token = _json.loads(res.read())["access_token"]
+            donnees_api_ups._token = token
+        except Exception as e:
+            print(f"AVERTISSEMENT: authentification API UPS echouee ({e}) -- repli API desactive pour ce lot.")
+            donnees_api_ups._token = ""
+            cache[tracking] = (None, None)
+            return (None, None)
+    try:
+        url = f"https://onlinetools.ups.com/api/track/v1/details/{urllib.parse.quote(tracking)}"
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {token}",
+            "transId": str(int(time.time() * 1000)),
+            "transactionSrc": "facturation-transporteurs",
+        })
+        with urllib.request.urlopen(req, timeout=8) as res:
+            data = _json.loads(res.read())
+        for shipment in (data.get("trackResponse", {}) or {}).get("shipment", []):
+            for pkg in shipment.get("package", []):
+                w = pkg.get("weight") or {}
+                poids = num(w.get("weight"))
+                if poids and poids > 0:
+                    # unitOfMeasurement observe en pratique comme string simple ("KGS"), pas
+                    # dict {code: "KGS"} -- BUG TROUVE 2026-08-27 (reponse API reelle testee),
+                    # tolerant aux deux formes par securite.
+                    raw_unit = w.get("unitOfMeasurement")
+                    unit = str((raw_unit.get("code") if isinstance(raw_unit, dict) else raw_unit) or "KGS").upper()
+                    poids = round(poids * 0.45359237, 2) if unit == "LBS" else poids
+                else:
+                    poids = None
+                colis = pkg.get("packageCount")
+                colis = int(colis) if isinstance(colis, (int, float, str)) and str(colis).strip().isdigit() else None
+                if poids or colis:
+                    cache[tracking] = (poids, colis)
+                    return (poids, colis)
+        cache[tracking] = (None, None)
+        return (None, None)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            cache[tracking] = (None, None)
+            return (None, None)
+        print(f"AVERTISSEMENT: API UPS Tracking erreur {e.code} pour {tracking} -- POIDS/COLIS restent a 0.")
+        cache[tracking] = (None, None)
+        return (None, None)
+    except Exception as e:
+        print(f"AVERTISSEMENT: appel API UPS echoue pour {tracking} ({e}) -- POIDS/COLIS restent a 0.")
+        cache[tracking] = (None, None)
+        return (None, None)
+
+
 def retry(fn, tries=8, delay=0.6):
     import time
     last = None
@@ -211,8 +470,27 @@ def retry(fn, tries=8, delay=0.6):
     raise last
 
 
+def load_dotenv_ups():
+    """Charge facturation-app/.env dans os.environ (UPS_CLIENT_ID/SECRET) -- parseur minimal
+    plutot qu'une dependance python-dotenv non garantie sur le poste d'execution. No-op
+    silencieux si le fichier est absent (repli API simplement desactive, cf. poids_api_ups)."""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "facturation-app", ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k, v = k.strip(), v.strip()
+            if k and k not in os.environ:
+                os.environ[k] = v
+
+
 def main():
-    modele, sortie, csv_paths, brut_paths, period = parse_args(sys.argv)
+    load_dotenv_ups()
+    modele, sortie, csv_paths, brut_paths, period, import_m1_path = parse_args(sys.argv)
     if not csv_paths:
         raise RuntimeError("Aucun CSV fourni (--csv <facture1.csv> [...]).")
     shutil.copyfile(modele, sortie)  # on ne touche JAMAIS au modele
@@ -226,6 +504,15 @@ def main():
     if not all_rows:
         raise RuntimeError("Fichier(s) UPS vide(s) ou illisible(s).")
     print(f"Entrée : {len(all_rows)} ligne(s) brute(s), {len(csv_paths)} fichier(s).")
+
+    # Repli Zone (regle 3, CDC 2026-08-27) : zone=0 SANS fret -> chercher le tracking dans le
+    # fichier import CSV du mois precedent (deja livre a l'ERP). Charge tot avec les autres
+    # sources externes ; consomme plus loin, apres le calcul Excel de "Fichier import".
+    zone_m1_map = load_import_m1(import_m1_path)
+    if zone_m1_map:
+        print(f"Fichier import du mois précédent : {len(zone_m1_map)} tracking(s)/zone(s) chargé(s) (repli Zone=0 sans frêt).")
+    elif import_m1_path:
+        print("AVERTISSEMENT: fichier import M-1 fourni mais aucune zone exploitable n'en a été extraite.")
 
     # Mois cible = choix utilisateur (--period, source de verite, decision 2026-08-20 --
     # BUG TROUVE 2026-08-26 : --period n'etait jamais transmis au finaliseur, "Date validite
@@ -314,6 +601,164 @@ def main():
         print(f"{len(demandes_avoir_1z79)} colis en 1Z79 (retour viticulteur chez La Ruche) exclus de l'import — reportés dans l'onglet 'Demande avoir' : {sorted(demandes_avoir_1z79.keys())}.")
     if n_sans_identification:
         print(f"{n_sans_identification} ligne(s) sans Numéro de suivi ni Numéro de référence 1 supprimée(s) (aucune clé d'identification exploitable).")
+
+    # Repli POIDS en cascade (priorite 1: poids audite UPS en texte -- priorite 2: export WMS
+    # brut m/m-1/m-2 -- priorite 3: API UPS Tracking, dernier recours) -- BUG TROUVE 2026-08-27 :
+    # ce repli existait deja cote carrier Node (carriers/ups/index.js) mais n'avait AUCUN effet
+    # sur le fichier reellement livre, car UPS utilise importFromWorkbook=true (le CSV final vient
+    # de CE classeur/finaliseur, pas du calcul JS). Porte ici, en amont de data_brut, pour que le
+    # poids injecte soit repris par TOUTES les formules Excel en aval (zone colis poids assurance,
+    # TCD, Fichier import) exactement comme un vrai poids UPS.
+    # BUG TROUVE 2026-08-31 (test reel, tracking A1912WTZX8M) : ces maps etaient calculees sur
+    # lignes_retenues (DEJA filtree "Montant net = 0" quelques lignes plus haut) -- or le VRAI
+    # poids/colis d'un tracking en lignes multiples (FRT + BRK/GOV/EXM/TAX) est souvent porte par
+    # la ligne FRT, qui peut avoir Montant net=0.00 (le vrai cout est sur les lignes BRK/GOV
+    # associees) et se faisait donc supprimer AVANT que ce calcul ne la voie -- le tracking
+    # n'avait alors plus aucune ligne avec un vrai poids/colis, repli impossible (aucun export
+    # WMS/API ne peut "trouver" une donnee qui existait deja dans le CSV brut). Fix : calculer
+    # ces maps sur all_rows (TOUTES les lignes brutes, avant filtrage montant=0), meme source que
+    # l'agregation 1Z79 plus haut -- l'injection finale reste sur lignes_retenues (seules lignes
+    # encore presentes en sortie).
+    max_poids_par_tracking = {}
+    poids_audite_par_tracking = {}
+    for r in all_rows:
+        t = str(r[COL["numero_suivi"]] if len(r) > COL["numero_suivi"] else "").strip()
+        if not t:
+            continue
+        # BUG TROUVE 2026-08-27 : "if p > dict.get(t, 0)" ne cree JAMAIS l'entree pour un
+        # tracking dont TOUTES les lignes ont poids=0 (0 > 0 est faux) -- le tracking restait
+        # absent de max_poids_par_tracking, donc invisible pour trackings_a_zero ci-dessous.
+        # setdefault garantit une entree meme a 0.
+        max_poids_par_tracking.setdefault(t, 0.0)
+        p = num(r[COL["poids_facture"]] if len(r) > COL["poids_facture"] else "")
+        if p > max_poids_par_tracking[t]:
+            max_poids_par_tracking[t] = p
+        pa = poids_audite_de_ligne(r)
+        if pa and pa > poids_audite_par_tracking.get(t, 0):
+            poids_audite_par_tracking[t] = pa
+
+    # Repli NBRE COLIS -- meme famille de probleme que le poids (lignes d'AJUSTEMENT/correction
+    # UPS, ex. codeClasse=ACC "Frais de correction d'expedition", ou "Nombre de colis"=0 dans le
+    # CSV brut). CONFIRME 2026-08-27 (tracking 1ZA1912WD990370248) : aucun texte cache
+    # equivalent a "AUDITED WEIGHT" pour le nombre de colis -- UPS ne le fournit pas du tout sur
+    # ces lignes. Seul repli disponible : export WMS brut (colonne INFO_NBCOLIS), pas d'API
+    # UPS equivalente pour le nombre de colis -- contrairement au poids, pas de priorite 1/3.
+    # Calcule sur all_rows -- meme raison que le poids ci-dessus (BUG TROUVE 2026-08-31).
+    max_colis_par_tracking = {}
+    for r in all_rows:
+        t = str(r[COL["numero_suivi"]] if len(r) > COL["numero_suivi"] else "").strip()
+        if not t:
+            continue
+        max_colis_par_tracking.setdefault(t, 0.0)
+        c = num(r[COL["nombre_colis"]] if len(r) > COL["nombre_colis"] else "")
+        if c > max_colis_par_tracking[t]:
+            max_colis_par_tracking[t] = c
+
+    # Repli PAYS -- meme famille de probleme que Poids/Colis (lignes d'AJUSTEMENT/correction
+    # UPS, colonne Pays vide dans le CSV brut). CONFIRME 2026-08-27 (tracking
+    # 1ZA1912WD990370248) : pays destinataire trouve dans l'export WMS brut (colonne
+    # DES_PAYS), meme mecanisme que Colis -- pas d'audite texte ni d'API pour le pays.
+    # Calcule sur all_rows -- meme raison que le poids/colis ci-dessus (BUG TROUVE 2026-08-31).
+    max_pays_par_tracking = {}
+    for r in all_rows:
+        t = str(r[COL["numero_suivi"]] if len(r) > COL["numero_suivi"] else "").strip()
+        if not t:
+            continue
+        pays_ligne = str(r[COL["pays"]] if len(r) > COL["pays"] else "").strip()
+        if pays_ligne and t not in max_pays_par_tracking:
+            max_pays_par_tracking[t] = pays_ligne
+
+    trackings_poids_a_zero = [t for t, p in max_poids_par_tracking.items() if not p]
+    trackings_colis_a_zero = [t for t, c in max_colis_par_tracking.items() if not c]
+    trackings_pays_vide = [t for t in max_poids_par_tracking if not max_pays_par_tracking.get(t)]
+    besoin_export = bool(brut_paths and (trackings_poids_a_zero or trackings_colis_a_zero or trackings_pays_vide))
+    poids_export_map, colis_export_map, pays_export_map = load_brut_poids_colis_pays(brut_paths) if besoin_export else ({}, {}, {})
+
+    # Cache PARTAGE entre Poids et Colis (meme appel API renvoie les deux, cf.
+    # donnees_api_ups) -- evite un 2e appel reseau pour un tracking a la fois Poids=0 ET
+    # Colis=0 (deja interroge lors du repli Poids, reponse encore en cache pour Colis).
+    # ORDRE VOLONTAIRE (ne pas inverser) : export brut D'ABORD, API en DERNIER recours --
+    # verifie empiriquement 2026-08-31 que l'API sous-evalue le Poids sur les envois
+    # multi-colis (ne renvoie qu'1 seul package, pas le total du groupage), cf. avertissement
+    # complet dans donnees_api_ups() ci-dessus. Le Colis (packageCount) est fiable cote API,
+    # mais l'ordre reste le meme pour tout le monde par coherence et simplicite du cache
+    # partage.
+    api_cache = {}
+    n_repli_audite = n_repli_export = n_repli_api = 0
+    poids_repli_par_tracking = {}
+    for t in trackings_poids_a_zero:
+        if poids_audite_par_tracking.get(t):
+            poids_repli_par_tracking[t] = poids_audite_par_tracking[t]
+            n_repli_audite += 1
+        elif poids_export_map.get(t):
+            poids_repli_par_tracking[t] = poids_export_map[t]
+            n_repli_export += 1
+        else:
+            p_api, _c_api = donnees_api_ups(t, api_cache)
+            if p_api:
+                poids_repli_par_tracking[t] = p_api
+                n_repli_api += 1
+
+    # AJOUT 2026-08-31 : repli Colis via API UPS Tracking (packageCount), dernier recours --
+    # confirme disponible dans la reponse API (cf. donnees_api_ups), contrairement a ce qui
+    # etait suppose avant (aucune verification empirique n'avait ete faite). Meme cascade que
+    # Poids : export brut d'abord (deja majoritaire), API en dernier recours seulement.
+    n_repli_colis_export = n_repli_colis_api = 0
+    colis_repli_par_tracking = {}
+    for t in trackings_colis_a_zero:
+        if colis_export_map.get(t):
+            colis_repli_par_tracking[t] = colis_export_map[t]
+            n_repli_colis_export += 1
+        else:
+            _p_api, c_api = donnees_api_ups(t, api_cache)
+            if c_api:
+                colis_repli_par_tracking[t] = c_api
+                n_repli_colis_api += 1
+
+    n_repli_pays_export = 0
+    pays_repli_par_tracking = {}
+    for t in trackings_pays_vide:
+        if pays_export_map.get(t):
+            pays_repli_par_tracking[t] = pays_export_map[t]
+            n_repli_pays_export += 1
+
+    # BUG TROUVE 2026-08-31 (tracking A1912WTZX8M) : max_poids_par_tracking/max_colis_par_tracking
+    # sont calcules sur all_rows (toutes les lignes brutes) mais l'injection ci-dessous ne
+    # portait QUE sur poids_repli_par_tracking/colis_repli_par_tracking (repli audite/export/
+    # API, cas ou le max sur all_rows est LUI-MEME 0). Si le vrai poids/colis existe deja dans
+    # all_rows (ex. ligne FRT a Montant net=0, supprimee de lignes_retenues AVANT ce calcul,
+    # mais le tracking garde d'autres lignes a montant non-nul type BRK/GOV/EXM) le tracking
+    # ne rentre plus dans trackings_poids_a_zero/trackings_colis_a_zero (max non-nul) -- mais
+    # RIEN n'ecrivait alors ce max (deja connu) sur les lignes restantes, qui gardaient leur
+    # propre poids/colis individuel a 0. Fix : injecter aussi le max connu (all_rows) sur toute
+    # ligne dont le poids/colis INDIVIDUEL est a 0, independamment du mecanisme de repli
+    # audite/export/API (qui ne concerne que les trackings dont le max GLOBAL est encore 0).
+    if poids_repli_par_tracking or colis_repli_par_tracking or pays_repli_par_tracking or max_poids_par_tracking or max_colis_par_tracking:
+        for r in lignes_retenues:
+            t = str(r[COL["numero_suivi"]] if len(r) > COL["numero_suivi"] else "").strip()
+            if len(r) > COL["poids_facture"]:
+                poids_repli = poids_repli_par_tracking.get(t) or max_poids_par_tracking.get(t)
+                if poids_repli and num(r[COL["poids_facture"]]) == 0:
+                    r[COL["poids_facture"]] = poids_repli
+            if len(r) > COL["nombre_colis"]:
+                colis_repli = colis_repli_par_tracking.get(t) or max_colis_par_tracking.get(t)
+                if colis_repli and num(r[COL["nombre_colis"]]) == 0:
+                    r[COL["nombre_colis"]] = colis_repli
+            pays_repli = pays_repli_par_tracking.get(t)
+            if pays_repli and len(r) > COL["pays"]:
+                r[COL["pays"]] = pays_repli
+    if n_repli_audite:
+        print(f"{n_repli_audite} tracking(s) à Poids = 0 complété(s) avec le poids audité UPS (AUDITED WEIGHT en texte dans la facture).")
+    if n_repli_export:
+        print(f"{n_repli_export} tracking(s) à Poids = 0 complété(s) via l'export WMS 'expéditions_brut'.")
+    if n_repli_api:
+        print(f"{n_repli_api} tracking(s) à Poids = 0 complété(s) via l'API UPS Tracking (dernier recours).")
+    if n_repli_colis_export:
+        print(f"{n_repli_colis_export} tracking(s) à Nombre de colis = 0 complété(s) via l'export WMS 'expéditions_brut'.")
+    if n_repli_colis_api:
+        print(f"{n_repli_colis_api} tracking(s) à Nombre de colis = 0 complété(s) via l'API UPS Tracking (dernier recours).")
+    if n_repli_pays_export:
+        print(f"{n_repli_pays_export} tracking(s) à Pays manquant complété(s) via l'export WMS 'expéditions_brut'.")
 
     ncol = max((len(r) for r in lignes_retenues), default=0)
     data_brut = [[coerce(v) for v in (r + [None] * ncol)[:ncol]] for r in lignes_retenues]
@@ -414,6 +859,16 @@ def main():
         wsZcp = wb.Sheets("zone colis poids assurance")
         lastZcp = wsZcp.Cells(wsZcp.Rows.Count, 4).End(xlUp).Row
         if lastZcp >= 2:
+            # CDC pole transport 2026-08-27 ("poids jamais a 0, arrondi sup 0 decimale, seules
+            # decimales autorisees 0,1 et 0,5") : colonne I couvre deja "arrondi sup 0 decimale"
+            # pour tous les comptes non-COD (ROUNDUP(H,0) = toujours un entier). Colonne J
+            # (UPS_COD, <=3 colis et poids<10kg) arrondit techniquement a 1 decimale quelconque
+            # (x.1 a x.9), mais aucune occurrence hors {0,1 ; 0,5} n'a ete observee sur les
+            # fichiers reels livres -- NON MODIFIEE : la demande utilisateur est traitee comme
+            # portant sur l'interdiction de poids=0 (deja couverte par la cascade de repli
+            # Python audite/export WMS/API, lignes ~500-611, appliquee AVANT ces formules). Si
+            # un poids reel x.3/x.7 apparait un jour, revoir avec MROUND(H,0.5) (+ ROUNDUP
+            # minimum pour eviter un retour a 0).
             formulas_zcp = {
                 2: "=COUNTIF('Clients log'!A:A,A{row})",          # B Logistique
                 3: "=IF(E{row}=0,1,E{row})",                        # C Colis
@@ -529,19 +984,6 @@ def main():
         LAST_COL_IMPORT = 24
         newLastImp = max(lastTcd - 1, 2)
 
-        formulas_import = {
-            2: '=IF(COUNTIF(\'zone colis poids assurance\'!D:D,I{row})=0,"inconnu",_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!F:F))',  # C Zone (colonne interne de controle)
-            4: '=IF(COUNTIF(\'Comptes UPS\'!A:A,RIGHT(LEFT(I{row},8),6))=0,"inconnu",_xlfn.XLOOKUP(RIGHT(LEFT(I{row},8),6),\'Comptes UPS\'!A:A,\'Comptes UPS\'!B:B))',  # D Transport
-            6: "=_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!T:T)",  # F Ref.1 (simplifie : pas de IF("","") ici, valeur brute)
-            7: "=_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!U:U)",  # G Ref.2
-            9: "=TCD!E{tcdrow}",  # I N° Tracking
-            11: '=IF(B{row}="particulier","P",IF(X{row}="","E","P"))',  # K E/P
-            12: "=_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!CH:CH)",  # L Pays
-            13: '=IF(LEN(C{row})>2,C{row},IF(L{row}="FR","France",_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!F:F)))',  # M Zone
-            14: "=MAX(_xlfn.XLOOKUP(I{row},'zone colis poids assurance'!D:D,'zone colis poids assurance'!E:E),A{row})",  # N Nbr Colis
-            15: '=IF(D{row}="UPS_COD",_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!J:J),_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!I:I))',  # O Poids
-            16: '=IF(COUNTIF(\'ST SV\'!H:H,I{row})=0,"inconnu",_xlfn.XLOOKUP(I{row},\'ST SV\'!H:H,\'ST SV\'!N:N))',  # P mode envoi
-        }
         # BUG TROUVE 2026-08-25 (signale par l'utilisateur : "Fichier import" n'a pas de
         # formules comme le fichier fait-main) : les formules ci-dessous referencaient le TCD
         # par LIGNE FIXE (TCD!col{tcdrow}) -- fige en valeurs plus bas AVANT suppression des
@@ -552,9 +994,61 @@ def main():
         # assurance"/"Facture UPS" deja en XLOOKUP par tracking, jamais par position. Une
         # formule qui cherche par tracking reste valide meme apres suppression de lignes ->
         # permet de GARDER des formules vivantes dans "Fichier import" (fidele au fait-main)
-        # au lieu de figer en valeurs.
+        # au lieu de figer en valeurs. Definie ICI (avant formulas_import) car la formule Zone
+        # (regles 2/4, CDC 2026-08-27) a aussi besoin de tcd_lookup(col_fret)/(col_plus_value).
         def tcd_lookup(col):
             return f"_xlfn.XLOOKUP(I{{row}},TCD!E:E,TCD!{col}:{col})"
+
+        # CDC pole transport 2026-08-27 -- regles Zone (priorite dans cet ordre) :
+        #   5) compte WV5788 (Verde Trad, colonne D deja resolue en "Verde Trad") -> Zone=
+        #      "France" FORCE (override absolu, prioritaire a tout le reste) + Mode envoi="ST"
+        #      force (cf. formulas_import[16] plus bas).
+        #   2) Zone brute=0/vide + Fret entre 3 et 8EUR (fourchette large validee, "fret ~5EUR")
+        #      + Pays vide ou FR -> Zone="France".
+        #   3) Zone brute=0/vide + PAS de fret -> laisser 0 ICI ; corrige ensuite en PYTHON via
+        #      le fichier import du mois precedent (zone_m1_map, cf. bloc post-Calculate plus
+        #      bas) -- ne peut pas etre une formule Excel (donnee externe).
+        #   sinon : zone_brute (formule d'origine, inchangee).
+        #   4) (applique sur le RESULTAT ci-dessus, PAS avant) : plus-value BtoC<2EUR ET
+        #      Zone="France" ET pas WV5788 -> marqueur "A VERIFIER" (signale au lieu de modifier
+        #      silencieusement -- WV5788 exempte car regle 5 est un override volontaire, pas une
+        #      zone "a verifier").
+        # Regle 1 (interdit Zone=0) : satisfaite une fois le repli Python M-1 applique -- la
+        # formule Excel seule peut encore produire 0 de facon transitoire (regle 3), corrige
+        # dans le bloc post-Calculate plus bas.
+        # zone_brute reference directement C{row} (colonne interne de controle, formula index 2
+        # ci-dessous) plutot que de reecrire l'expression XLOOKUP -- C{row} EST deja "IF(LEN>2,
+        # zone,'inconnu')" via son propre COUNTIF, donc equivalent a l'ancienne logique inline
+        # (LEN(C)>2 -> C ; sinon Pays=FR -> France ; sinon C tel quel, qui vaut alors "inconnu"
+        # ou un vrai zonage court) SANS reevaluer XLOOKUP plusieurs fois dans la meme formule
+        # (evite un formule M demesuree sur 6000-8700 lignes).
+        zone_brute = 'IF(LEN(C{row})>2,C{row},IF(L{row}="FR","France",C{row}))'
+        fret_expr = tcd_lookup(col_fret) if col_fret else '""'
+        plus_value_expr = tcd_lookup(col_plus_value) if col_plus_value else '""'
+        zone_calculee_sans_wv = (
+            f'IF(AND(OR({zone_brute}=0,{zone_brute}=""),{fret_expr}<>"",{fret_expr}>=3,{fret_expr}<=8,OR(L{{row}}="",L{{row}}="FR")),"France",'
+            f'IF(AND(OR({zone_brute}=0,{zone_brute}=""),OR({fret_expr}="",{fret_expr}=0)),0,'
+            f'{zone_brute}))'
+        )
+        formula_zone = (
+            f'=IF(D{{row}}="Verde Trad","France",'
+            f'IF(AND({plus_value_expr}<>"",{plus_value_expr}<2,({zone_calculee_sans_wv})="France"),'
+            f'"A VERIFIER",{zone_calculee_sans_wv}))'
+        )
+
+        formulas_import = {
+            2: '=IF(COUNTIF(\'zone colis poids assurance\'!D:D,I{row})=0,"inconnu",_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!F:F))',  # C Zone (colonne interne de controle)
+            4: '=IF(COUNTIF(\'Comptes UPS\'!A:A,RIGHT(LEFT(I{row},8),6))=0,"inconnu",_xlfn.XLOOKUP(RIGHT(LEFT(I{row},8),6),\'Comptes UPS\'!A:A,\'Comptes UPS\'!B:B))',  # D Transport
+            6: "=_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!T:T)",  # F Ref.1 (simplifie : pas de IF("","") ici, valeur brute)
+            7: "=_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!U:U)",  # G Ref.2
+            9: "=TCD!E{tcdrow}",  # I N° Tracking
+            11: '=IF(B{row}="particulier","P",IF(X{row}="","E","P"))',  # K E/P
+            12: "=_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!CH:CH)",  # L Pays
+            13: formula_zone,  # M Zone (regles 1/2/4/5 CDC 2026-08-27, cf. ci-dessus)
+            14: "=MAX(_xlfn.XLOOKUP(I{row},'zone colis poids assurance'!D:D,'zone colis poids assurance'!E:E),A{row})",  # N Nbr Colis
+            15: '=IF(D{row}="UPS_COD",_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!J:J),_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!I:I))',  # O Poids
+            16: '=IF(D{row}="Verde Trad","ST",IF(COUNTIF(\'ST SV\'!H:H,I{row})=0,"inconnu",_xlfn.XLOOKUP(I{row},\'ST SV\'!H:H,\'ST SV\'!N:N)))',  # P mode envoi (Verde Trad force "ST", regle 5)
+        }
 
         if col_tva:
             formulas_import[17] = f'=IF({tcd_lookup(col_tva)}="",0,0.2)'  # Q TVA
@@ -695,6 +1189,71 @@ def main():
             print(f"'Fichier import' : {wsImpUsedLastRow - newLastImp} ligne(s) residuelle(s) (mise en forme sans donnees) supprimee(s) au-dela de la ligne {newLastImp}.")
         xl.Calculate()
 
+        # CDC pole transport 2026-08-27 : repli Zone M-1 (regle 3) + validations console
+        # (TVA hors UE, point B ; SV/ST, regles 6/7) -- APRES la suppression des lignes vides
+        # et residuelles ci-dessus (numeros de ligne definitifs, plus aucun decalage a venir),
+        # AVANT le Save()/Close() plus bas. Une seule lecture COM groupee (colonnes I->Q) pour
+        # limiter les allers-retours sur potentiellement 6000-8700 lignes (meme principe deja
+        # applique ligne ~1059, "lecture en BLOC").
+        if newLastImp >= 2:
+            rangeZoneVal = wsImp.Range(wsImp.Cells(2, 9), wsImp.Cells(newLastImp, 17))  # I..Q
+            valuesZoneVal = rangeZoneVal.Value
+            # Offsets 0-based DANS cette plage I..Q (I=0) -- PAS les offsets 1-based habituels
+            # de "Fichier import" ni ceux de la plage A..X plus haut (piege deja documente,
+            # BUG TROUVE 2026-08-27 sur POSTE_COLS_VALUES) : I=0,...,L(Pays)=3,M(Zone)=4,
+            # N=5,O=6,P(Mode envoi)=7,Q(TVA)=8.
+            IDX_TRACKING, IDX_PAYS, IDX_ZONE, IDX_MODE, IDX_TVA = 0, 3, 4, 7, 8
+
+            # Repli Zone M-1 (regle 3) : Zone encore 0/vide apres le calcul Excel -> tracking
+            # cherche dans le fichier import du mois precedent (zone_m1_map).
+            corrections_m1 = []  # (index 0-based dans valuesZoneVal, zone)
+            for i, row in enumerate(valuesZoneVal):
+                zone_v = row[IDX_ZONE]
+                if zone_v in (0, "0", "", None):
+                    t = str(row[IDX_TRACKING] or "").strip()
+                    zone_m1 = zone_m1_map.get(t)
+                    if zone_m1:
+                        corrections_m1.append((i, zone_m1))
+            if corrections_m1:
+                for i, zone_m1 in corrections_m1:
+                    r = i + 2
+                    wsImp.Cells(r, 13).Value = zone_m1  # M Zone, EN VALEUR (donnee externe)
+                print(f"'Fichier import' : {len(corrections_m1)} tracking(s) à Zone=0 sans frêt complété(s) via le fichier import du mois précédent.")
+                xl.Calculate()
+                valuesZoneVal = rangeZoneVal.Value  # relecture : les validations ci-dessous doivent voir les zones corrigees
+
+            # Validation TVA=0 hors UE (point B) -- ALERTE CONSOLE UNIQUEMENT, aucune ecriture.
+            suspects_tva = []
+            for i, row in enumerate(valuesZoneVal):
+                tva_v = row[IDX_TVA]
+                if tva_v and num(tva_v) > 0:
+                    pays_v = str(row[IDX_PAYS] or "").strip().upper()
+                    if pays_v and pays_v not in PAYS_UE:
+                        suspects_tva.append((i + 2, pays_v))
+            if suspects_tva:
+                echantillon = ", ".join(f"L{r}:{p}" for r, p in suspects_tva[:20])
+                print(f"ALERTE: {len(suspects_tva)} ligne(s) à TVA calculée (20%) pour un pays hors UE (a verifier) : {echantillon}{' ...' if len(suspects_tva) > 20 else ''}.")
+
+            # Validation croisee SV/ST (regles 6/7) -- ALERTE CONSOLE UNIQUEMENT, table
+            # PAYS_SV_ST = zoning fourni par le pole transport, sert a detecter une
+            # incoherence avec le calcul existant, jamais a le modifier.
+            incoherences_sv_st = []
+            for i, row in enumerate(valuesZoneVal):
+                pays_v = str(row[IDX_PAYS] or "").strip().upper()
+                ref = PAYS_SV_ST.get(pays_v)
+                if not ref:
+                    continue
+                zones_sv, zones_st = ref
+                zone_v = str(row[IDX_ZONE] or "").strip()
+                mode_v = str(row[IDX_MODE] or "").strip().upper()
+                if mode_v == "SV" and zones_sv and zone_v not in zones_sv:
+                    incoherences_sv_st.append((i + 2, pays_v, zone_v, mode_v, "/".join(zones_sv)))
+                elif mode_v == "ST" and zones_st and zone_v not in zones_st:
+                    incoherences_sv_st.append((i + 2, pays_v, zone_v, mode_v, "/".join(zones_st)))
+            if incoherences_sv_st:
+                echantillon = ", ".join(f"L{r}:{p} zone={z} mode={m} (attendu {att})" for r, p, z, m, att in incoherences_sv_st[:20])
+                print(f"ALERTE: {len(incoherences_sv_st)} ligne(s) Zone/Mode envoi incohérente(s) avec le zoning UPS fourni (aucune valeur modifiée) : {echantillon}{' ...' if len(incoherences_sv_st) > 20 else ''}.")
+
         # 7) "Demande avoir" (1Z79) : Tracking/Nb colis/Montant/Cause -- Factures/Poids/Mode
         #    livraison laisses vides (saisie manuelle du pole transport, jamais remplis meme
         #    dans le fichier fait-main). Purge d'abord les lignes du modele clone (mois
@@ -744,7 +1303,48 @@ def main():
                 # famille de bug que Colissimo/FedEx (cellule encore en etat transitoire au
                 # moment de la lecture COM, malgre la reouverture apres sauvegarde). Filtre sur
                 # le tracking (index 5 dans row = colonne I=9 moins le decalage colonne D=4).
-                values = [row for row in values if str(row[5] or "").strip() not in ("", "0.0", "(vide)", "inconnu")]
+                # BUG TROUVE 2026-08-27 : le tracking fantome n'est pas toujours "0.0" -- observe
+                # une fois avec Tracking="AB" (valeur imprevisible selon l'etat transitoire COM),
+                # qui echappait donc au filtre. Signal plus fiable : Transporteur="inconnu" (index
+                # 0 = colonne D) COMBINE a tous les postes ERP vides -- c'est la vraie signature
+                # de la ligne fantome, le tracking associe n'etant qu'un symptome variable.
+                # BUG TROUVE 2026-08-27 (test reel, "tuple index out of range") : cette plage
+                # "values" va de D a X (24-4=21 colonnes, index 0-20), PAS la meme etendue que
+                # POSTE_COLS_0BASED plus haut (calcule sur une plage A->X = 24 colonnes). Postes
+                # ERP (Droits et taxes -> plus-value BtoC) dans CETTE plage D->X : index 14-20
+                # (R=DroitsTaxes(14), S=Assurance(15), T=ZonesEloignees(16), U=ColisVolumineux(17),
+                # V=Adresses(18), W=Fret(19), X=PlusValueB2C(20)) -- PAS 17-23 (hors plage).
+                POSTE_COLS_VALUES = [14, 15, 16, 17, 18, 19, 20]
+                # BUG TROUVE 2026-08-28 (test reel, tracking "A1912WTZX8M") : la ligne fantome
+                # n'a PAS TOUJOURS Transporteur="inconnu" -- observe une fois avec Transporteur
+                # ="inconnu" MAIS un poste ERP non vide (Droits et taxes=67,66), qui echappait
+                # donc au filtre AND ci-dessus (conjonction trop stricte). Chaque nouvelle
+                # variante de cette famille de bug (valeur COM transitoire au moment de la
+                # lecture post-sauvegarde) a une signature differente et imprevisible ("0.0",
+                # "AB", "A1912WTZX8M"...) -- deviner un nouveau motif a chaque fois n'est pas
+                # fiable. Fix definitif : comparer contre la LISTE REELLE des trackings connus
+                # (lignes_retenues, deja en memoire Python, source de verite construite AVANT
+                # toute manipulation Excel) -- un tracking absent de cet ensemble est PAR
+                # DEFINITION une ligne fantome, quelle que soit sa valeur exacte.
+                trackings_reels = {
+                    str(r[COL["numero_suivi"]] if len(r) > COL["numero_suivi"] else "").strip()
+                    for r in lignes_retenues
+                }
+                trackings_reels.discard("")
+                def est_fantome(row):
+                    tracking_str = str(row[5] or "").strip()
+                    if tracking_str not in trackings_reels:
+                        return True
+                    if tracking_str in ("", "0.0", "(vide)", "inconnu"):
+                        return True
+                    transporteur_str = str(row[0] or "").strip().lower()
+                    if transporteur_str == "inconnu" and all((row[c] if c < len(row) else None) in (None, "", 0) for c in POSTE_COLS_VALUES):
+                        return True
+                    return False
+                n_fantomes = sum(1 for row in values if est_fantome(row))
+                values = [row for row in values if not est_fantome(row)]
+                if n_fantomes:
+                    print(f"'Fichier import' : {n_fantomes} ligne(s) fantome(s) (tracking absent des donnees sources, artefact COM transitoire) exclue(s) de l'export final.")
                 n_err = 0
                 def clean(v):
                     nonlocal n_err

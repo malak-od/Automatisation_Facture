@@ -2,6 +2,7 @@
 //  SERVEUR WEB — choisir un transporteur, deposer ses documents, generer l'import.
 //  Lancer : npm start   puis ouvrir http://localhost:3000
 // ============================================================================
+require('dotenv').config(); // charge facturation-app/.env (identifiants API UPS, etc.) AVANT tout le reste
 const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
@@ -108,7 +109,17 @@ app.post('/api/process', upload.any(), async (req, res) => {
     }
     // regroupe les fichiers uploades par cle d'input (nom de champ)
     const files = {};
-    for (const f of req.files || []) (files[f.fieldname] = files[f.fieldname] || []).push(f.path);
+    // Noms de fichiers ORIGINAUX (avant renommage multer en hex sans extension), meme
+    // regroupement que `files` -- ajoute a part (n'existait pas avant) pour ne rien casser
+    // des carriers qui traitent deja `files.<key>` comme un simple tableau de chemins passe
+    // tel quel a execFileAsync. Necessaire pour trier les exports "AAAA MM - Export
+    // expeditions_brut.xlsx" par mois (UPS, repli Poids sur mois courant/M-1/M-2 -- l'ordre de
+    // depot par l'utilisateur ne peut pas etre suppose fiable).
+    const fileNames = {};
+    for (const f of req.files || []) {
+      (files[f.fieldname] = files[f.fieldname] || []).push(f.path);
+      (fileNames[f.fieldname] = fileNames[f.fieldname] || []).push(f.originalname);
+    }
 
     // Mois choisi dans l'UI = source de verite si fourni (decision utilisateur 2026-08-20,
     // corrige le bug UPS "date validite decale un mois" -- l'auto-detection par carrier reste
@@ -118,7 +129,7 @@ app.post('/api/process', upload.any(), async (req, res) => {
     const periodRaw = String(req.body.period || '');
     const periodMatch = /^(\d{4})_(\d{2})$/.exec(periodRaw);
     const periodOverride = periodMatch ? { formatted: periodRaw, compact: `${periodMatch[1]}${periodMatch[2]}` } : null;
-    const result = await carrier.process(files, { period: periodOverride });
+    const result = await carrier.process(files, { period: periodOverride, fileNames });
     const period = (periodOverride && periodOverride.formatted) || result.period || 'export';
     const suffix = 'test'; // suffixe figé (différencie du fichier fait à la main)
     const workbookOnly = !!carrier.workbookOnly; // ex. Delivengo : le classeur EST l'import
@@ -158,7 +169,7 @@ app.post('/api/process', upload.any(), async (req, res) => {
       try {
         const scriptAbs = path.resolve(__dirname, carrier.finalizer.script);
         const templateAbs = path.resolve(__dirname, carrier.finalizer.template);
-        const extra = carrier.finalizer.buildArgs ? carrier.finalizer.buildArgs(files, period, __dirname) : (files.csv || []);
+        const extra = carrier.finalizer.buildArgs ? carrier.finalizer.buildArgs(files, period, __dirname, fileNames) : (files.csv || []);
         const { stdout } = await execFileAsync('python', [scriptAbs, templateAbs, wbPath, ...extra], { windowsHide: true, maxBuffer: 20 * 1024 * 1024 });
         workbookMode = 'clone';
         // le finaliseur peut signaler des cas a verifier (ex. poids introuvable dans les bruts,
