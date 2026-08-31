@@ -458,15 +458,34 @@ def donnees_api_ups(tracking, cache):
         return (None, None)
 
 
+def _est_valeur_com_vide_ou_erreur(v):
+    """True si v est vide (None) ou une VALEUR D'ERREUR EXCEL (#N/A, #REF!, #DIV/0!...).
+    BUG TROUVE 2026-08-31 (piege COM non documente jusqu'ici) : contrairement a ce qu'on
+    pourrait supposer, Excel via win32com NE retourne PAS la chaine "#N/A" pour une cellule en
+    erreur -- il retourne un ENTIER NEGATIF (code d'erreur OLE, ex. NA()=-2146826246,
+    DIV/0=-2146826281), confirme empiriquement (script de test isole, xl.Cells(...).Value sur
+    une formule =NA()). Un test du style str(v).startswith("#") ne matche donc JAMAIS une
+    vraie erreur -- explique pourquoi une premiere version de derniere_ligne_reelle() basee
+    sur ce test ne rognait rien du tout en conditions reelles. Les codes d'erreur Excel/OLE
+    sont tous des entiers tres negatifs (< -2000000000) ; un entier normal de donnee metier
+    (poids, montant, numero de compte...) ne descend jamais a ce niveau -- distinction fiable."""
+    if v is None:
+        return True
+    if isinstance(v, int) and v < -2000000000:
+        return True
+    s = str(v).strip()
+    return (not s) or s.startswith("#")
+
+
 def derniere_ligne_reelle(ws, last_col_check, last_row_end_xlup):
     """Rogne 'last_row_end_xlup' (resultat de Cells(Rows.Count,c).End(xlUp).Row) en remontant
-    tant que la cellule de la colonne 'last_col_check' est vide/valeur d'erreur (#N/A, #REF!...).
-    BUG TROUVE 2026-08-31 (onglet TCD, tracking A1912WTZX8M) : End(xlUp) peut s'arreter a tort
-    sur une ligne RESIDUELLE du modele/PivotTable natif (colonne cible vide mais Excel la juge
-    "non-vide" pour une raison de mise en forme/etat transitoire) -- ces lignes fantomes
-    etirent ensuite les formules bien au-dela des vraies donnees, et se propagent en cascade
-    (ex. 'Fichier import', qui s'etend sur la taille du TCD). Lecture en BLOC (1 aller-retour
-    COM), pas cellule par cellule."""
+    tant que la cellule de la colonne 'last_col_check' est vide/en erreur (cf.
+    _est_valeur_com_vide_ou_erreur). BUG TROUVE 2026-08-31 (onglet TCD, tracking
+    A1912WTZX8M) : End(xlUp) peut s'arreter a tort sur une ligne RESIDUELLE du modele/
+    PivotTable natif (colonne cible vide mais Excel la juge "non-vide" pour une raison de mise
+    en forme/etat transitoire) -- ces lignes fantomes etirent ensuite les formules bien au-dela
+    des vraies donnees, et se propagent en cascade (ex. 'Fichier import', qui s'etend sur la
+    taille du TCD). Lecture en BLOC (1 aller-retour COM), pas cellule par cellule."""
     if last_row_end_xlup < 2:
         return last_row_end_xlup
     values = ws.Range(ws.Cells(2, last_col_check), ws.Cells(last_row_end_xlup, last_col_check)).Value
@@ -474,8 +493,7 @@ def derniere_ligne_reelle(ws, last_col_check, last_row_end_xlup):
         values = ((values,),)
     row = last_row_end_xlup
     while row >= 2:
-        v = values[row - 2][0]
-        if v is not None and str(v).strip() and not str(v).strip().startswith("#"):
+        if not _est_valeur_com_vide_ou_erreur(values[row - 2][0]):
             break
         row -= 1
     return row
