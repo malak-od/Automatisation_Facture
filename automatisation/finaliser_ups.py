@@ -458,6 +458,29 @@ def donnees_api_ups(tracking, cache):
         return (None, None)
 
 
+def derniere_ligne_reelle(ws, last_col_check, last_row_end_xlup):
+    """Rogne 'last_row_end_xlup' (resultat de Cells(Rows.Count,c).End(xlUp).Row) en remontant
+    tant que la cellule de la colonne 'last_col_check' est vide/valeur d'erreur (#N/A, #REF!...).
+    BUG TROUVE 2026-08-31 (onglet TCD, tracking A1912WTZX8M) : End(xlUp) peut s'arreter a tort
+    sur une ligne RESIDUELLE du modele/PivotTable natif (colonne cible vide mais Excel la juge
+    "non-vide" pour une raison de mise en forme/etat transitoire) -- ces lignes fantomes
+    etirent ensuite les formules bien au-dela des vraies donnees, et se propagent en cascade
+    (ex. 'Fichier import', qui s'etend sur la taille du TCD). Lecture en BLOC (1 aller-retour
+    COM), pas cellule par cellule."""
+    if last_row_end_xlup < 2:
+        return last_row_end_xlup
+    values = ws.Range(ws.Cells(2, last_col_check), ws.Cells(last_row_end_xlup, last_col_check)).Value
+    if not isinstance(values, tuple):
+        values = ((values,),)
+    row = last_row_end_xlup
+    while row >= 2:
+        v = values[row - 2][0]
+        if v is not None and str(v).strip() and not str(v).strip().startswith("#"):
+            break
+        row -= 1
+    return row
+
+
 def retry(fn, tries=8, delay=0.6):
     import time
     last = None
@@ -892,7 +915,11 @@ def main():
         #    colonne E = Numero de suivi). Colonnes A (Logistique)/C (Client) NON reconstruites
         #    (manuelles -- Client = regle transversale ID client, saisie humaine).
         wsTcd = wb.Sheets("TCD")
-        lastTcd = wsTcd.Cells(wsTcd.Rows.Count, 5).End(xlUp).Row
+        # BUG TROUVE 2026-08-31 : End(xlUp) seul peut s'arreter sur une ligne residuelle du
+        # modele (colonne E vide, cf. derniere_ligne_reelle) -- rogne AVANT d'etirer B/D pour
+        # eviter que ces formules elles-memes ne creent les residus vus plus loin (etape 2,
+        # masquage 1Z79) sur des lignes qui n'auraient jamais du exister.
+        lastTcd = derniere_ligne_reelle(wsTcd, 5, wsTcd.Cells(wsTcd.Rows.Count, 5).End(xlUp).Row)
         if lastTcd >= 3:  # entete sur 2 lignes
             formulas_tcd = {
                 2: "=SUM(F{row}:K{row})+O{row}+M{row}",  # B Cout (controle)
@@ -927,7 +954,17 @@ def main():
                     break
             wb.RefreshAll()
             xl.Calculate()
-            lastTcd = wsTcd.Cells(wsTcd.Rows.Count, 5).End(xlUp).Row
+            # BUG TROUVE 2026-08-31 (tracking A1912WTZX8M, ligne 6912 "DATE manquante" + lignes
+            # fantomes juste apres, ex. "AB") : End(xlUp) peut s'arreter a tort sur des lignes
+            # RESIDUELLES du PivotTable natif (cf. derniere_ligne_reelle) -- consequence en
+            # cascade : "Fichier import" (qui s'etend sur lastTcd) herite de ces lignes fantomes,
+            # et la formule Date validite en chaine (=E{prev}) CASSE en #REF! des qu'une ligne
+            # intermediaire est supprimee plus loin (filtre "lignes sans charge"), affectant
+            # meme la DERNIERE ligne REELLE juste avant les fantomes.
+            lastTcdAvant = wsTcd.Cells(wsTcd.Rows.Count, 5).End(xlUp).Row
+            lastTcd = derniere_ligne_reelle(wsTcd, 5, lastTcdAvant)
+            if lastTcd < lastTcdAvant:
+                print(f"'TCD' : {lastTcdAvant - lastTcd} ligne(s) résiduelle(s) (tracking vide/erreur, artefact PivotTable) exclue(s) en fin de tableau.")
         except Exception as e:
             print("Avertissement : masquage 1Z79 sur le TCD a échoué :", e)
 
@@ -1036,9 +1073,27 @@ def main():
             f'"A VERIFIER",{zone_calculee_sans_wv}))'
         )
 
+        # BUG TROUVE 2026-08-31 (tracking A1912WTZX8M, frais de douane GB) : RIGHT(LEFT(I,8),6)
+        # suppose un format "1Z"+compte(6) -- faux pour les trackings de frais de dedouanement/
+        # ajustement (format compte(6) SANS prefixe "1Z", ex. A1912WTZX8M, A1912WVN938,
+        # A1912WSRQJ7 -- meme famille que celles deja vues dans le modele fait-main de juin,
+        # A1912WTRHVP/A1912WVMB7Q). Sur ce format, RIGHT(LEFT(I,8),6) extrait "912WTZ" (faux)
+        # au lieu de "A1912W" (vrai compte, verifie present dans 'Comptes UPS' -> "UPS").
+        # Fix : si l'extraction standard ne matche aucun compte, retente avec LEFT(I,6) (compte
+        # en tete du tracking, sans prefixe "1Z") avant de retomber sur "inconnu" -- retrouve le
+        # VRAI nom de compte (peut differer de "UPS" simple, ex. UPS_COD) plutot que de forcer
+        # une valeur en dur. Corrige aussi Date validite/Ref.1/Ref.2 en aval (deja des formules
+        # generiques par tracking, rien a changer la -- elles dependaient seulement de ce que
+        # Transporteur ne soit plus "inconnu" pour se comporter comme toute autre ligne).
+        compte_standard = "RIGHT(LEFT(I{row},8),6)"
+        compte_sans_1z = "LEFT(I{row},6)"
         formulas_import = {
             2: '=IF(COUNTIF(\'zone colis poids assurance\'!D:D,I{row})=0,"inconnu",_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!F:F))',  # C Zone (colonne interne de controle)
-            4: '=IF(COUNTIF(\'Comptes UPS\'!A:A,RIGHT(LEFT(I{row},8),6))=0,"inconnu",_xlfn.XLOOKUP(RIGHT(LEFT(I{row},8),6),\'Comptes UPS\'!A:A,\'Comptes UPS\'!B:B))',  # D Transport
+            4: (f'=IF(COUNTIF(\'Comptes UPS\'!A:A,{compte_standard})<>0,'
+                f'_xlfn.XLOOKUP({compte_standard},\'Comptes UPS\'!A:A,\'Comptes UPS\'!B:B),'
+                f'IF(COUNTIF(\'Comptes UPS\'!A:A,{compte_sans_1z})<>0,'
+                f'_xlfn.XLOOKUP({compte_sans_1z},\'Comptes UPS\'!A:A,\'Comptes UPS\'!B:B),'
+                f'"inconnu"))'),  # D Transport
             6: "=_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!T:T)",  # F Ref.1 (simplifie : pas de IF("","") ici, valeur brute)
             7: "=_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!U:U)",  # G Ref.2
             9: "=TCD!E{tcdrow}",  # I N° Tracking
