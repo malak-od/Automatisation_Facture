@@ -202,6 +202,11 @@ module.exports = {
   name: 'Lettres (Suivie / Prepa)',
   status: 'ready',
   noWorkbook: true, // pas de classeur de reference local -> pas de classeur de sortie, juste les imports
+  // Poids brut WMS repris tel quel (pas de recalcul), peut avoir plus d'1 decimale. Lu par
+  // server.js pour l'alerte "POIDS X a plus d'1 decimale" (2e passe de validate() sur le CSV
+  // final, cf. BUG TROUVE 2026-08-31 : la 1ere passe cote carrier avait deja ce flag mais
+  // etait ecrasee par la 2e passe qui l'ignorait).
+  skipPoidsDecimal: true,
   taxeGasoil: 'Pas de taxe gasoil.',
   method: "Export WMS brut ('Export expeditions_brut.xlsx'), filtre sur TRANSPORTEUR en 2 groupes : LETTRE-SUIVIE (+ HYDRATIS), LETTRE-SUIVIE-PREPA. LETTRE-TIMBRE-SLAACE exclu du périmètre. Fret fixe par groupe (3,83€ / 0,01€). Expéditions pas encore parties (tracking vide + statut 'en préparation'/'en attente') exclues, pas facturées. PRO_TRACKING invalide restant (dupliqué/mal formé) -> remplacé par CODE_EXPE.",
   inputs: [

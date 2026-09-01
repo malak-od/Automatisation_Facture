@@ -171,6 +171,12 @@ module.exports = {
   id: 'delivengo',
   name: 'Delivengo',
   status: 'ready',
+  // Poids Delivengo precis au gramme (MAX poids brut WMS / poids export suivi), pas la regle
+  // ARRONDI.SUP a 1 decimale des transporteurs colis classiques -- meme cas que Lettres. Lu
+  // par server.js pour l'alerte "POIDS X a plus d'1 decimale" (2e passe de validate() sur le
+  // CSV final, cf. BUG TROUVE 2026-08-31 : la 1ere passe cote carrier avait deja ce flag mais
+  // etait ecrasee par la 2e passe qui l'ignorait).
+  skipPoidsDecimal: true,
   taxeGasoil: 'Pas de taxe gasoil (frêt = 1,0).',
   method: "Export du suivi Delivengo (.xls). Le classeur final (feuille 'Fichier import') est un clone du fichier fait a la main : A=Date remise, F=Statut, G=N° suivi, H=Destinataire, X=Pays ; J/K/M/O/W = formules (table Pays). P (Droits et taxes) et Q (Assurance) ne sont que des colonnes de calcul intermediaire (poids export brut recherchex / poids Delivengo propre /1000, servent a M=MAX(P,Q)) : videes en fin de traitement, comme Statut et Taxe Gasoil si 0. Import ERP (23 colonnes standard) relu depuis ce meme classeur une fois calcule.",
   inputs: [
