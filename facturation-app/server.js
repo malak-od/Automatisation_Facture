@@ -249,7 +249,12 @@ app.post('/api/process', upload.any(), async (req, res) => {
       // transporteurs, pas seulement ceux avec importFromWorkbook.
       const finalRows = readImportCsvFinal(impCsvPath);
       if (finalRows) {
-        result.alerts = validate(finalRows).alerts;
+        // BUG TROUVE 2026-08-31 : cet appel ecrasait TOUJOURS result.alerts sans reprendre
+        // l'option skipPoidsDecimal du carrier (ex. Delivengo, Lettres, Chronopost -- poids
+        // legitimement precis, pas la regle ARRONDI.SUP a 1 decimale des autres transporteurs)
+        // -- la 1ere passe faite cote carrier avec ce flag etait donc invisible, l'alerte
+        // "POIDS X a plus d'1 decimale" revenait en masse (446 lignes constatees sur Delivengo).
+        result.alerts = validate(finalRows, { skipPoidsDecimal: !!carrier.skipPoidsDecimal }).alerts;
         totaux = sumPostesRows(finalRows);
       }
     }

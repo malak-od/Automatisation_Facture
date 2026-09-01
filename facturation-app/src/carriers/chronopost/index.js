@@ -485,6 +485,10 @@ module.exports = {
   id: 'chronopost',
   name: 'Chronopost',
   status: 'ready',
+  // Lu par server.js pour l'alerte "POIDS X a plus d'1 decimale" (2e passe de validate() sur
+  // le CSV final, cf. BUG TROUVE 2026-08-31 : la 1ere passe cote carrier avait deja ce flag
+  // mais etait ecrasee par la 2e passe qui l'ignorait).
+  skipPoidsDecimal: true,
   taxeGasoil: "Reelle, imprimee en clair sur chaque facture PDF (ex. 'Surcharge Carburant Routier : 12,75% sur montant de X EUR') -- PAS une constante fixe a chercher sur le site chaque mois. Facturee en lignes forfaitaires separees (CAP*) par le transporteur, mises en pool par facture puis redistribuees au prorata du fret sur chaque ligne normale de cette meme facture.",
   method: "2 fichiers Excel bruts (1 par sous-compte, en-tête ligne 4) : les lignes 'colis' (Numero LT = tracking) sont reclassées en postes ERP via la table Catégories (Type prestation → poste). Les lignes forfaitaires (Numero LT commençant par CAP/ECO/SUR = Surcharge Carburant/Éco-Responsable/Sûreté) ne sont jamais dans l'import — leur montant Gazole (CAP) est mis en pool par facture puis redistribué au prorata du frêt sur chaque ligne colis. Mode envoi/zone via la table Bibliothèque transporteurs (+ règles spéciales 6B/6C via Zoning 2shop, 17/44 via Zone Tarifaire). Réconciliation PDF par n° de facture (Total HT).",
   inputs: [
