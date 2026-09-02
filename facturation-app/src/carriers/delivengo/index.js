@@ -79,6 +79,14 @@ function readFichierImport(xlsxPath) {
       const ci = colFor[c.key];
       let v = ci >= 0 ? r[ci] : '';
       if (c.key === 'DateValidite') v = excelSerialToDateStr(v);
+      // BUG TROUVE 2026-09-01 : 'Gazole' (TaxeGasoil) est declare num:false dans
+      // IMPORT_COLUMNS (schema partage -- texte libre type "11,70%" pour d'autres
+      // transporteurs), mais chez Delivengo vient d'un LOOKUP Excel reellement numerique
+      // (feuille "Pays"!E, ex. 1.5) -- String(v) laissait le point US tel quel au lieu de
+      // la virgule francaise attendue par le CSV import (writeImportCsv/fmtCsv ne convertit
+      // que les vrais typeof 'number', jamais une string deja formee). Fix cible Delivengo
+      // uniquement : convertir explicitement si c'est un nombre.
+      else if (c.key === 'TaxeGasoil') v = typeof v === 'number' ? String(v).replace('.', ',') : (v == null ? '' : String(v));
       else if (c.num) v = v === '' || v == null ? 0 : Number(v) || 0;
       else v = v == null ? '' : String(v);
       o[c.key] = v;
@@ -88,7 +96,7 @@ function readFichierImport(xlsxPath) {
   return importRows;
 }
 
-/** Args du finaliseur (template + export + brut du mois/mois-1) : reutilise a la
+/** Args du finaliseur (template + export + brut du mois/mois-1 + periode) : reutilise a la
  * fois par process() (calcul interne) et par finalizer.buildArgs (repli). */
 function computeFinalizerArgs(files, period, appRoot) {
   const brutDir = path.resolve(appRoot, '../automatisation');
@@ -100,21 +108,27 @@ function computeFinalizerArgs(files, period, appRoot) {
     return f ? path.join(brutDir, f) : null;
   };
   const brut = [findBrut(y, m), findBrut(m === 1 ? y - 1 : y, m === 1 ? 12 : m - 1)].filter(Boolean);
-  return ['--export', ...(files.export || []), '--brut', ...brut];
+  return ['--export', ...(files.export || []), '--brut', ...brut, ...(period ? ['--period', period] : [])];
 }
 
-async function process(files) {
+async function process(files, opts) {
   const p = (files.export || [])[0];
   if (!p) throw new Error('Aucun export du suivi Delivengo fourni (.xls).');
   const wb = XLSX.readFile(p);
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false }).slice(1).filter((r) => r && r.length && r[COL.suivi]);
 
-  // periode = 1ere date de remise (JJ/MM/AAAA) -> AAAA_MM
-  let period = 'export';
-  for (const r of rows) {
-    const m = String(r[COL.remise] || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (m) { period = `${m[3]}_${m[2]}`; break; }
+  // Mois choisi dans l'UI (opts.period, source de verite) prioritaire -- BUG TROUVE
+  // 2026-09-01 : la Date validite tarif (calculee cote Python, cf. finaliser_delivengo.py)
+  // se basait avant sur la 1ere date de remise de l'export, jamais sur le choix utilisateur
+  // (meme piege deja corrige cote UPS). Repli sur la detection automatique si absent.
+  let period = (opts && opts.period && opts.period.formatted) || null;
+  if (!period) {
+    period = 'export';
+    for (const r of rows) {
+      const m = String(r[COL.remise] || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (m) { period = `${m[3]}_${m[2]}`; break; }
+    }
   }
 
   // controles simples (le detail/formules sont dans le classeur genere)
