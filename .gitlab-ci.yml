@@ -1,0 +1,7 @@
+
+# Scanne le code et l'historique Git pour des secrets/tokens oublies (ex. credentials API
+# UPS, .env) -- template officiel GitLab, gratuit (Community Edition). Le bouton
+# "Configure with a merge request" de Secure > Security configuration est reserve aux
+# roles Owner/Maintainer/security manager -- ajoute directement ici a la place.
+include:
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
