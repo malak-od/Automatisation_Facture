@@ -138,6 +138,7 @@
 <header>
   <h1 onclick="goHome()">🚚 Facturation Transporteurs</h1>
   <span class="sub">Import + classeur, automatisés</span>
+  <button class="addfile" style="margin-left:auto" onclick="showHistory()">🕘 Historique des générations</button>
 </header>
 <div class="layout">
   <main id="main"><p class="spinner">Chargement…</p></main>
@@ -394,6 +395,53 @@ function renderResult(d, monthChosen) {
 async function reveal(stamp) {
   try { await fetch('/api/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stamp }) }); }
   catch (e) { /* dossier accessible manuellement dans Telechargements/ */ }
+}
+
+// Historique des generations (demande utilisateur 2026-09-02) : liste tous les runs passes
+// (un run.json par transporteur+periode, ecrit cote serveur a chaque generation), du plus
+// recent au plus ancien, avec leurs alertes/infos deja calculees -- evite de devoir deviner
+// quel fichier de sortie correspond a quel run via les timestamps.
+async function showHistory() {
+  current = null;
+  const m = document.getElementById('main');
+  m.innerHTML = `<button class="back" onclick="goHome()">← Retour</button>
+    <div class="card"><h3>🕘 Historique des générations</h3><p class="spinner">Chargement…</p></div>`;
+  let runs = [];
+  try {
+    const res = await fetch('/api/history');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Erreur');
+    runs = data.runs || [];
+  } catch (err) {
+    m.innerHTML = `<button class="back" onclick="goHome()">← Retour</button>
+      <div class="card"><div class="plan-note">❌ ${err.message}</div></div>`;
+    return;
+  }
+  if (!runs.length) {
+    m.innerHTML = `<button class="back" onclick="goHome()">← Retour</button>
+      <div class="card"><h3>🕘 Historique des générations</h3><p class="kv">Aucune génération enregistrée pour l'instant.</p></div>`;
+    return;
+  }
+  const cards = runs.map((r) => {
+    const isErr = r.statut === 'erreur';
+    const dateStr = r.timestamp ? new Date(r.timestamp).toLocaleString('fr-FR') : '';
+    const nomTransp = r.carrier || r.carrierId || '?';
+    if (isErr) {
+      return `<div class="card"><h3>❌ ${nomTransp}${r.periode ? ' — ' + r.periode.replace('_',' ') : ''}</h3>
+        <div class="kv">${dateStr}</div>
+        <div class="plan-note" style="margin-top:8px">${r.error || 'Erreur inconnue'}</div></div>`;
+    }
+    const alerts = r.alerts || [];
+    const infos = r.infos || [];
+    return `<div class="card"><h3>${nomTransp} — ${(r.periode||'').replace('_',' ')} <span class="badge ${alerts.length ? 'planned' : 'ready'}" style="margin-left:6px">${alerts.length} alerte(s)</span></h3>
+      <div class="kv">${dateStr} · ${r.lignes ?? '?'} ligne(s)${r.totalHt != null ? ' · ' + r.totalHt.toFixed(2) + ' € HT' : ''}</div>
+      ${alerts.length ? `<details style="margin-top:8px"><summary style="cursor:pointer;color:#fbbf24">⚠️ ${alerts.length} alerte(s)</summary><div class="alerts">${alerts.map(a=>`<div>⚠️ ${a}</div>`).join('')}</div></details>` : ''}
+      ${infos.length ? `<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">ℹ️ ${infos.length} info(s)</summary><div class="alerts" style="color:#7dd3fc">${infos.map(a=>`<div>${a}</div>`).join('')}</div></details>` : ''}
+    </div>`;
+  }).join('');
+  m.innerHTML = `<button class="back" onclick="goHome()">← Retour</button>
+    <div class="card"><h3>🕘 Historique des générations</h3><div class="kv">${runs.length} génération(s) enregistrée(s), la plus récente en premier.</div></div>
+    ${cards}`;
 }
 
 load();
