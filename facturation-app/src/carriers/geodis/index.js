@@ -93,7 +93,16 @@ function firstDayOfMonth(v) {
 // une ligne dediee (montant fixe mensuel, sans tracking, cf. config).
 async function extractGeodisPdfTotal(pdfPath) {
   const buf = require('fs').readFileSync(pdfPath);
-  const { text } = await pdfParse(buf);
+  const { text: rawText } = await pdfParse(buf);
+  // BUG TROUVE 2026-09-02 : certaines factures Geodis (ex. GEODIS D&E RHONE-ALPES) rendent
+  // "Montant Taxable HT" avec des ESPACES INSECABLES (U+00A0), pas des espaces normaux --
+  // confirme par inspection des code points ("Montant Taxable HT"). indexOf() sur
+  // une chaine litterale a espaces normaux echouait donc silencieusement (retournait null,
+  // PDF ignore pour la reconciliation) alors que le libelle etait bien present et lisible a
+  // l'oeil. Normalise tous les espaces Unicode (NBSP compris) en espace normal avant
+  // recherche -- les regex plus bas (\s) geraient deja NBSP nativement, seul indexOf() etait
+  // affecte.
+  const text = rawText.replace(/[  -  ]/g, ' ');
   const iTaxable = text.indexOf('Montant Taxable HT');
   if (iTaxable === -1) return null;
   const after = text.slice(iTaxable);
