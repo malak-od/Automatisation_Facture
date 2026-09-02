@@ -46,7 +46,21 @@ const HEADER_TO_KEY = {
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 function excelSerialToDateStr(v) {
   if (v == null || v === '') return '';
-  if (v instanceof Date) return `01/${String(v.getMonth() + 1).padStart(2, '0')}/${v.getFullYear()}`;
+  // BUG TROUVE 2026-09-01 : XLSX.readFile({cellDates:true}) convertit le serial Excel du
+  // 01/08/2026 en Date JS "2026-07-31T21:59:39.000Z" -- DERIVE DE PRECISION connue de
+  // SheetJS lors de la conversion serial->Date (pas exactement minuit UTC). Avec .getMonth()
+  // (heure LOCALE, ex. UTC+2 en France), 21:59:39 UTC redevient 23:59:39 heure locale... mais
+  // ENCORE LE 31 JUILLET -> mois=juillet au lieu d'aout. Le classeur genere (Excel/COM) avait
+  // pourtant la bonne date -- seule la RELECTURE via XLSX/cellDates la corrompait,
+  // expliquant pourquoi le CSV import divergeait du classeur livre. Fix definitif : ne plus
+  // lire cette colonne en Date JS du tout (readFichierImport lit desormais en
+  // cellDates:false -- le serial Excel brut, fiable, alimente la branche 'number'
+  // ci-dessous). Cette branche Date reste en filet de securite, arrondie au jour le plus
+  // proche en UTC pour tolerer une derive similaire si jamais elle est un jour exercee.
+  if (v instanceof Date) {
+    const rounded = new Date(Math.round(v.getTime() / 86400000) * 86400000);
+    return `01/${String(rounded.getUTCMonth() + 1).padStart(2, '0')}/${rounded.getUTCFullYear()}`;
+  }
   if (typeof v === 'number') {
     const d = new Date(EXCEL_EPOCH_MS + v * 86400000);
     return `01/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
@@ -62,7 +76,11 @@ const ZERO_IN_IMPORT = new Set(['DroitsTaxes', 'Assurance']);
 /** Relit la feuille "Fichier import" du classeur DEJA FINALISE (formules calculees,
  * purge appliquee) -> construit importRows au format standard IMPORT_COLUMNS. */
 function readFichierImport(xlsxPath) {
-  const wb = XLSX.readFile(xlsxPath, { cellDates: true });
+  // cellDates:false (defaut) -- lit les dates en SERIAL EXCEL BRUT (number), pas en objet
+  // Date JS -- cf. BUG TROUVE 2026-09-01 juste au-dessus (excelSerialToDateStr) : la
+  // conversion Date de SheetJS peut deriver de quelques heures et faire basculer un
+  // 1er-du-mois sur le mois precedent selon le fuseau horaire local.
+  const wb = XLSX.readFile(xlsxPath);
   const ws = wb.Sheets['Fichier import'];
   if (!ws) throw new Error('Classeur Delivengo finalisé : onglet "Fichier import" introuvable.');
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });

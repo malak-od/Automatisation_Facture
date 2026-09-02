@@ -33,7 +33,13 @@ const POSTE_KEYS = ['Fret'];
 
 function firstDayOfMonth(d) {
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null;
-  return `01/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  // BUG TROUVE 2026-09-01 (meme piege identifie/corrige cote Delivengo) : XLSX.readFile
+  // ({cellDates:true}) peut deriver de quelques heures lors de la conversion serial Excel ->
+  // Date JS (ex. minuit UTC devient 21:59:39 la veille) -- .getMonth()/.getFullYear() en
+  // heure LOCALE peuvent alors faire basculer un 1er-du-mois sur le mois precedent. Fix :
+  // arrondir au jour le plus proche en UTC avant d'en extraire mois/annee.
+  const rounded = new Date(Math.round(d.getTime() / 86400000) * 86400000);
+  return `01/${String(rounded.getUTCMonth() + 1).padStart(2, '0')}/${rounded.getUTCFullYear()}`;
 }
 
 /** Normalise pour comparaison de nom de colonne (accents/casse), meme logique que Geodis/DPD. */

@@ -70,7 +70,15 @@ function idx(header, name) {
 
 function firstDayOfMonth(v) {
   // "Date piece" peut arriver en texte JJ/MM/AAAA ou AAAA-MM-JJ, ou en date Excel (via xlsx: objet Date si cellFormula/cellDates, sinon numero serie)
-  if (v instanceof Date) return `01/${String(v.getMonth() + 1).padStart(2, '0')}/${v.getFullYear()}`;
+  // BUG TROUVE 2026-09-01 (meme piege identifie/corrige cote Delivengo) : XLSX.readFile
+  // ({cellDates:true}) peut deriver de quelques heures lors de la conversion serial Excel ->
+  // Date JS (ex. minuit UTC devient 21:59:39 la veille) -- .getMonth()/.getFullYear() en
+  // heure LOCALE peuvent alors faire basculer un 1er-du-mois sur le mois precedent. Fix :
+  // arrondir au jour le plus proche en UTC avant d'en extraire mois/annee.
+  if (v instanceof Date) {
+    const rounded = new Date(Math.round(v.getTime() / 86400000) * 86400000);
+    return `01/${String(rounded.getUTCMonth() + 1).padStart(2, '0')}/${rounded.getUTCFullYear()}`;
+  }
   const s = String(v || '').trim();
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
   if (m) return `01/${m[2]}/${m[1]}`;
