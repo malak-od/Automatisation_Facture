@@ -278,7 +278,7 @@ app.post('/api/process', upload.any(), async (req, res) => {
       console.warn('Copie vers Telechargements KO :', String(e.message || e).slice(0, 200));
     }
 
-    res.json({
+    const responseBody = {
       carrier: carrier.name,
       periode: period,
       stamp,
@@ -290,9 +290,58 @@ app.post('/api/process', upload.any(), async (req, res) => {
       alerts: result.alerts,
       infos: result.infos || [],
       downloads,
-    });
+    };
+
+    // Historique des runs (demande utilisateur 2026-09-02 : retrouver les alertes d'un run
+    // passe sans deviner via les timestamps de fichiers) -- un seul run.json par
+    // transporteur+periode, ecrase a chaque regeneration (meme regle que le dossier
+    // outputs/<stamp> lui-meme). Best-effort : ne doit jamais faire echouer la reponse.
+    try {
+      const runLog = { timestamp: new Date().toISOString(), carrierId: carrier.id, statut: 'ok', ...responseBody };
+      fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify(runLog, null, 2), 'utf8');
+    } catch (e) {
+      console.warn('Écriture run.json KO :', String(e.message || e).slice(0, 200));
+    }
+
+    res.json(responseBody);
   } catch (e) {
     console.error('Error in /api/process:', e && e.stack ? e.stack : e);
+    const message = userFacingError(e);
+    // Trace aussi les echecs (best-effort) -- utile pour l'historique cote UI, mais ne doit
+    // jamais lui-meme faire echouer la reponse d'erreur deja en cours.
+    try {
+      const carrierId = req.body && req.body.carrier;
+      const periodRaw = req.body && req.body.period;
+      if (carrierId) {
+        const stampErr = `${carrierId}_${periodRaw || 'inconnu'}`;
+        const dirErr = path.join(OUTPUTS, stampErr);
+        fs.mkdirSync(dirErr, { recursive: true });
+        fs.writeFileSync(path.join(dirErr, 'run.json'), JSON.stringify({
+          timestamp: new Date().toISOString(), carrierId, periode: periodRaw || null, stamp: stampErr,
+          statut: 'erreur', error: message,
+        }, null, 2), 'utf8');
+      }
+    } catch (e2) { /* ignore -- ne doit jamais masquer l'erreur originale */ }
+    res.status(500).json({ error: message });
+  }
+});
+
+// Historique des runs : liste tous les run.json disponibles, tries du plus recent au plus
+// ancien (demande utilisateur 2026-09-02 : consulter l'historique directement dans l'UI).
+app.get('/api/history', (req, res) => {
+  try {
+    const entries = [];
+    for (const name of fs.readdirSync(OUTPUTS, { withFileTypes: true })) {
+      if (!name.isDirectory()) continue;
+      const runPath = path.join(OUTPUTS, name.name, 'run.json');
+      if (!fs.existsSync(runPath)) continue;
+      try {
+        entries.push(JSON.parse(fs.readFileSync(runPath, 'utf8')));
+      } catch (e) { /* fichier run.json corrompu -- ignore */ }
+    }
+    entries.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
+    res.json({ runs: entries });
+  } catch (e) {
     res.status(500).json({ error: userFacingError(e) });
   }
 });
