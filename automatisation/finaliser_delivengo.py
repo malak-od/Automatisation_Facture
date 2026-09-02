@@ -86,10 +86,20 @@ def load_brut(brut_paths):
         wb.close()
     return m
 
-def build_block(rows, brut_map):
-    """Bloc 2D (n x 24). Colonnes-formule laissees VIDES (posees ensuite par FillDown)."""
-    valid = next((to_date(r[X_REMISE]) for r in rows if to_date(r[X_REMISE])), None)
-    date_valid = datetime(valid.year, valid.month, 1) if valid else None
+def build_block(rows, brut_map, period=None):
+    """Bloc 2D (n x 24). Colonnes-formule laissees VIDES (posees ensuite par FillDown).
+    'period' (AAAA_MM) = mois choisi dans l'UI, source de verite prioritaire pour la Date
+    validite tarif -- BUG TROUVE 2026-09-01 : elle restait calculee sur la 1ere date de remise
+    trouvee dans l'export uploade, jamais sur le choix utilisateur (meme piege deja corrige
+    cote UPS, carriers/ups/index.js)."""
+    m = re.fullmatch(r"(\d{4})_(\d{2})", period or "")
+    if m:
+        date_valid = datetime(int(m.group(1)), int(m.group(2)), 1)
+    else:
+        if period:
+            print(f"AVERTISSEMENT: --period {period!r} invalide (attendu AAAA_MM) -- date de remise de l'export utilisee en repli.")
+        valid = next((to_date(r[X_REMISE]) for r in rows if to_date(r[X_REMISE])), None)
+        date_valid = datetime(valid.year, valid.month, 1) if valid else None
     nb_reel = 0
     manquants = []   # trackings sans poids reel (a verifier/saisir a la main, comme l'operateur)
     block = []
@@ -156,23 +166,25 @@ def retry(fn, tries=8, delay=0.6):
 
 def parse_args(argv):
     """<modele> <sortie> --export <suivi.xls> --brut <brut_M.xlsx> [<brut_M-1.xlsx> ...]
-    (retrocompat : le 1er positionnel apres sortie = export)."""
+    [--period AAAA_MM] (retrocompat : le 1er positionnel apres sortie = export)."""
     modele, sortie = argv[1], argv[2]
-    export, brut, cur = None, [], None
+    export, brut, period, cur = None, [], None, None
     for a in argv[3:]:
         if a == "--export": cur = "e"
         elif a == "--brut": cur = "b"
+        elif a == "--period": cur = "p"
         elif cur == "b": brut.append(a)
+        elif cur == "p": period = a; cur = None
         elif cur == "e" or export is None: export = a
         else: brut.append(a)
-    return modele, sortie, export, brut
+    return modele, sortie, export, brut, period
 
 def main():
-    modele, sortie, export, brut_paths = parse_args(sys.argv)
+    modele, sortie, export, brut_paths, period = parse_args(sys.argv)
     shutil.copyfile(modele, sortie)
     rows = load_export(export)
     brut_map = load_brut(brut_paths)
-    block, date_valid, nb_reel, manquants = build_block(rows, brut_map)
+    block, date_valid, nb_reel, manquants = build_block(rows, brut_map, period)
     n = len(block)
     print(f"Export : {n} lignes | periode {date_valid.strftime('%Y_%m') if date_valid else '?'} "
           f"| poids reel apparie (brut) : {nb_reel}/{n} ({len(brut_map)} trackings dans le brut)")

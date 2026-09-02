@@ -46,7 +46,21 @@ const HEADER_TO_KEY = {
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 function excelSerialToDateStr(v) {
   if (v == null || v === '') return '';
-  if (v instanceof Date) return `01/${String(v.getMonth() + 1).padStart(2, '0')}/${v.getFullYear()}`;
+  // BUG TROUVE 2026-09-01 : XLSX.readFile({cellDates:true}) convertit le serial Excel du
+  // 01/08/2026 en Date JS "2026-07-31T21:59:39.000Z" -- DERIVE DE PRECISION connue de
+  // SheetJS lors de la conversion serial->Date (pas exactement minuit UTC). Avec .getMonth()
+  // (heure LOCALE, ex. UTC+2 en France), 21:59:39 UTC redevient 23:59:39 heure locale... mais
+  // ENCORE LE 31 JUILLET -> mois=juillet au lieu d'aout. Le classeur genere (Excel/COM) avait
+  // pourtant la bonne date -- seule la RELECTURE via XLSX/cellDates la corrompait,
+  // expliquant pourquoi le CSV import divergeait du classeur livre. Fix definitif : ne plus
+  // lire cette colonne en Date JS du tout (readFichierImport lit desormais en
+  // cellDates:false -- le serial Excel brut, fiable, alimente la branche 'number'
+  // ci-dessous). Cette branche Date reste en filet de securite, arrondie au jour le plus
+  // proche en UTC pour tolerer une derive similaire si jamais elle est un jour exercee.
+  if (v instanceof Date) {
+    const rounded = new Date(Math.round(v.getTime() / 86400000) * 86400000);
+    return `01/${String(rounded.getUTCMonth() + 1).padStart(2, '0')}/${rounded.getUTCFullYear()}`;
+  }
   if (typeof v === 'number') {
     const d = new Date(EXCEL_EPOCH_MS + v * 86400000);
     return `01/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
@@ -62,7 +76,11 @@ const ZERO_IN_IMPORT = new Set(['DroitsTaxes', 'Assurance']);
 /** Relit la feuille "Fichier import" du classeur DEJA FINALISE (formules calculees,
  * purge appliquee) -> construit importRows au format standard IMPORT_COLUMNS. */
 function readFichierImport(xlsxPath) {
-  const wb = XLSX.readFile(xlsxPath, { cellDates: true });
+  // cellDates:false (defaut) -- lit les dates en SERIAL EXCEL BRUT (number), pas en objet
+  // Date JS -- cf. BUG TROUVE 2026-09-01 juste au-dessus (excelSerialToDateStr) : la
+  // conversion Date de SheetJS peut deriver de quelques heures et faire basculer un
+  // 1er-du-mois sur le mois precedent selon le fuseau horaire local.
+  const wb = XLSX.readFile(xlsxPath);
   const ws = wb.Sheets['Fichier import'];
   if (!ws) throw new Error('Classeur Delivengo finalisé : onglet "Fichier import" introuvable.');
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
@@ -79,6 +97,14 @@ function readFichierImport(xlsxPath) {
       const ci = colFor[c.key];
       let v = ci >= 0 ? r[ci] : '';
       if (c.key === 'DateValidite') v = excelSerialToDateStr(v);
+      // BUG TROUVE 2026-09-01 : 'Gazole' (TaxeGasoil) est declare num:false dans
+      // IMPORT_COLUMNS (schema partage -- texte libre type "11,70%" pour d'autres
+      // transporteurs), mais chez Delivengo vient d'un LOOKUP Excel reellement numerique
+      // (feuille "Pays"!E, ex. 1.5) -- String(v) laissait le point US tel quel au lieu de
+      // la virgule francaise attendue par le CSV import (writeImportCsv/fmtCsv ne convertit
+      // que les vrais typeof 'number', jamais une string deja formee). Fix cible Delivengo
+      // uniquement : convertir explicitement si c'est un nombre.
+      else if (c.key === 'TaxeGasoil') v = typeof v === 'number' ? String(v).replace('.', ',') : (v == null ? '' : String(v));
       else if (c.num) v = v === '' || v == null ? 0 : Number(v) || 0;
       else v = v == null ? '' : String(v);
       o[c.key] = v;
@@ -88,7 +114,7 @@ function readFichierImport(xlsxPath) {
   return importRows;
 }
 
-/** Args du finaliseur (template + export + brut du mois/mois-1) : reutilise a la
+/** Args du finaliseur (template + export + brut du mois/mois-1 + periode) : reutilise a la
  * fois par process() (calcul interne) et par finalizer.buildArgs (repli). */
 function computeFinalizerArgs(files, period, appRoot) {
   const brutDir = path.resolve(appRoot, '../automatisation');
@@ -100,21 +126,27 @@ function computeFinalizerArgs(files, period, appRoot) {
     return f ? path.join(brutDir, f) : null;
   };
   const brut = [findBrut(y, m), findBrut(m === 1 ? y - 1 : y, m === 1 ? 12 : m - 1)].filter(Boolean);
-  return ['--export', ...(files.export || []), '--brut', ...brut];
+  return ['--export', ...(files.export || []), '--brut', ...brut, ...(period ? ['--period', period] : [])];
 }
 
-async function process(files) {
+async function process(files, opts) {
   const p = (files.export || [])[0];
   if (!p) throw new Error('Aucun export du suivi Delivengo fourni (.xls).');
   const wb = XLSX.readFile(p);
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false }).slice(1).filter((r) => r && r.length && r[COL.suivi]);
 
-  // periode = 1ere date de remise (JJ/MM/AAAA) -> AAAA_MM
-  let period = 'export';
-  for (const r of rows) {
-    const m = String(r[COL.remise] || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (m) { period = `${m[3]}_${m[2]}`; break; }
+  // Mois choisi dans l'UI (opts.period, source de verite) prioritaire -- BUG TROUVE
+  // 2026-09-01 : la Date validite tarif (calculee cote Python, cf. finaliser_delivengo.py)
+  // se basait avant sur la 1ere date de remise de l'export, jamais sur le choix utilisateur
+  // (meme piege deja corrige cote UPS). Repli sur la detection automatique si absent.
+  let period = (opts && opts.period && opts.period.formatted) || null;
+  if (!period) {
+    period = 'export';
+    for (const r of rows) {
+      const m = String(r[COL.remise] || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (m) { period = `${m[3]}_${m[2]}`; break; }
+    }
   }
 
   // controles simples (le detail/formules sont dans le classeur genere)
