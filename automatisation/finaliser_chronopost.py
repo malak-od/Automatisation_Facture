@@ -423,57 +423,37 @@ def main():
         for i, poste in enumerate(POSTE_KEYS_LISTE):
             ws.Cells(newLast + 3 + i, 30).Value = poste
 
-        # Zone recap AG2:AG5 : VRAIES FORMULES Excel SUMIF sur "Type prestation" (colonne N),
-        # PAS des valeurs Python (decision utilisateur 2026-08-13 : "pour les colonnes AF et
-        # AG faut laisser les formules dans les cellules"). SUMIF sur le LIBELLE plutot que
-        # SUM sur une plage fixe recalee a la main (methode du fichier reel, cf. transcription
-        # video "AF2:AF5 = SOMME(T<debut>:T<fin>) sur plage FIXE... recalee a la main apres
-        # tri") : verifie sur 2026_07_Facture Chronopost.xlsx que la plage fixe AG2=SUM(T31:
-        # T5000) EMPIETE en fait sur les lignes SURT* (31-33 sont encore forfaitaires a ce
-        # moment-la, pas des lignes Transport) -- erreur de calage manuel qui gonfle le Fret
-        # de ~130€. SUMIF(Type prestation) est ROBUSTE a ce risque (independant du tri/de la
-        # position des lignes) : AG2=SUMIF(N,"Transport",T), AG3=SUMIF(N,"Participation
-        # Eco-Responsable",T), AG4=SUMIF(N,"Sûreté colis",T) (libelles confirmes via la table
-        # 'categories' de config.json). AG5 (Gazole, pool CAP*) reste par PREFIXE Numero LT
-        # (2 libelles distincts "Surcharge Carburant Aérien"/"Routier" regroupes sous un seul
-        # poste "Gazole") -- SUMIF sur les 2 libelles cumules.
-        # CONSEQUENCE ATTENDUE (2026-08-13, confirme utilisateur) : la colonne AB "gazole"
-        # (=$AG$5/$AG$2*Z{row}) depend directement de ce AG2 -- comme notre AG2 est maintenant
-        # STRICTEMENT "Transport" (vs le fichier reel dont l'AG2 mal cale inclut ~130€ de
-        # lignes SURT*), le taux AG5/AG2 differe legerement du fichier reel (0,109 ici vs
-        # 0,101 dans '2026_07_Facture Chronopost.xlsx'), ce qui cree un ecart cumule de
-        # plusieurs centaines d'euros sur la colonne AB par rapport A CE FICHIER REEL
-        # SPECIFIQUE -- CE N'EST PAS UN BUG : c'est le fichier reel qui a l'erreur de calage,
-        # notre AG2 est correct par construction (SUMIF, insensible au tri/position).
-        # AG2 (Frêt) : SUMIF sur PLUSIEURS libelles "Type prestation" (pas seulement
-        # "Transport") -- liste confirmee par capture ecran du filtre AutoFilter reel du
-        # classeur (2026-08-14, cases cochees/decochees) : toutes les lignes cochees entrent
-        # dans le Frêt, INDEPENDAMMENT de leur classement dans la table "Categories" (qui sert
-        # au TCD/reclassement final ERP, un usage different -- ex. "Supplement Corse 18h" est
-        # classe poste "Corse" dans Categories mais reste inclus dans AG2 ici). Cases
-        # DECOCHEES sur la capture (donc PAS dans AG2) : "Participation Eco-Responsable"
-        # (deja AG3), "Sûreté colis" (deja AG4), "Surcharge Carburant Aérien"/"Routier" (deja
-        # AG5) -- coherent, chacune deja comptee ailleurs dans la zone recap.
-        FRET_TYPES_PRESTATION = [
-            "Transport", "Correction d'adresse", "Supp Retour Expediteur Europe",
-            "Supp Retour Expediteur Inter", "Supp Zone Internationale Eloignee",
-            "Supplement Annonce incomplète", "Supplement Corse 18h",
-            "Supplement domicile prive", "Supplement Douane Zone C4",
-            "Supplement Etiquette Non Conforme", "Supplement Forfait Expedition",
-            "Supplement GT", "Supplement Manutention", "Supplement Retour Expediteur",
-            "Supplement Retrait Bureau", "Traitement SAV complémentaire",
-            "Zones Difficiles d'accès",
-        ]
-        ws.Cells(2, 33).Formula = "=" + "+".join(
-            f'SUMIF({col_n}:{col_n},"{t}",{col_t}:{col_t})' for t in FRET_TYPES_PRESTATION
-        )  # AG2 Frêt
+        # Zone recap AG2:AG5 : VRAIES FORMULES Excel (colonne N = Type prestation, colonne T =
+        # Montant HT), PAS des valeurs Python (decision utilisateur 2026-08-13 : "pour les
+        # colonnes AF et AG faut laisser les formules dans les cellules"). SUMIF sur le LIBELLE
+        # plutot que SUM sur une plage fixe recalee a la main (methode du fichier reel, cf.
+        # transcription video "AF2:AF5 = SOMME(T<debut>:T<fin>) sur plage FIXE... recalee a la
+        # main apres tri") : verifie sur 2026_07_Facture Chronopost.xlsx que la plage fixe
+        # AG2=SUM(T31:T5000) EMPIETE en fait sur les lignes SURT* -- erreur de calage manuel qui
+        # gonfle le Fret de ~130€. SUMIF(Type prestation) est ROBUSTE a ce risque (independant
+        # du tri/de la position des lignes).
+        # AG3 (eco) / AG4 (surete) / AG5 (Gazole, pool CAP*) : listes FERMEES et STABLES de
+        # libelles forfaitaires du contrat (confirme via la table 'categories' de config.json +
+        # AutoFilter reel du classeur, 2026-08-14) -- AG3="Participation Eco-Responsable",
+        # AG4="Sûreté colis", AG5="Surcharge Carburant Aérien"+"Surcharge Carburant Routier".
+        # AG2 (Frêt) CORRIGE 2026-09-03 : ETAIT une SUMIF sur une liste POSITIVE figee de 17
+        # libelles Python (FRET_TYPES_PRESTATION) -- bug signale par l'utilisateur, cette liste
+        # etait deja incomplete vs 'categories' de config.json (au moins "Eco responsablePar",
+        # "Transport encompte", "Sûreté étendue" classes Frêt cote JS mais absents de la liste
+        # Python -> sous-evalues silencieusement dans AG2 si ces libelles apparaissent un jour).
+        # DECISION UTILISATEUR : abandonner la liste positive pour le Frêt -- Eco/Sûreté/Gazole
+        # ont chacun une liste fermee stable (correcte), donc Frêt = TOUT LE RESTE (total
+        # colonne T moins Eco/Sûreté/Gazole), par difference plutot que par enumeration. Toute
+        # NOUVELLE prestation inconnue tombe alors automatiquement dans Frêt, sans jamais avoir
+        # besoin d'etre ajoutee a une liste en dur.
         ws.Cells(3, 33).Formula = f'=SUMIF({col_n}:{col_n},"Participation Eco-Responsable",{col_t}:{col_t})'  # AG3 eco
         ws.Cells(4, 33).Formula = f'=SUMIF({col_n}:{col_n},"Sûreté colis",{col_t}:{col_t})'  # AG4 sûreté
         ws.Cells(5, 33).Formula = (
             f'=SUMIF({col_n}:{col_n},"Surcharge Carburant Aérien",{col_t}:{col_t})'
             f'+SUMIF({col_n}:{col_n},"Surcharge Carburant Routier",{col_t}:{col_t})'
         )  # AG5 Gazole
-        print("Zone récap : formules SUMIF ecrites en AG2 (Frêt) / AG3 (eco) / AG4 (sûreté) / AG5 (Gazole).")
+        ws.Cells(2, 33).Formula = f'=SUM({col_t}:{col_t})-AG3-AG4-AG5'  # AG2 Frêt = reste (total - eco - sûreté - gazole)
+        print("Zone récap : formules ecrites en AG2 (Frêt = total - eco - sûreté - gazole) / AG3 (eco) / AG4 (sûreté) / AG5 (Gazole).")
 
         # Reactive l'AutoFilter sur toute la largeur/hauteur utile (desactive plus haut, ligne
         # 325, pour eviter le piege ClearContents/lignes masquees -- jamais reactive avant ce

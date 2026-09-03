@@ -86,7 +86,13 @@ function firstDayOfMonth(v) {
 //   EUR H.T", "TOTAL FACTURE HT"), recherche tolerante aux espaces/sauts de
 //   ligne entre le libelle et le nombre (varie selon le mois).
 const DPD_TOTAL_LABELS = [/Total\s*EUR\s*H\.?T\s*[\r\n]*\s*([\d\s]+[.,]\d{2})/i, /TOTAL\s*FACTURE\s*HT\s*[\r\n]*\s*([\d\s]+[.,]\d{2})/i];
-async function extractDpdPdfTotal(pdfPath) {
+// displayName : nom ORIGINAL du fichier (avant renommage multer en hash hex sans
+// extension) -- utilise pour les warnings/infos affiches a l'ecran, pour que
+// l'utilisateur puisse retrouver le PDF concret cite dans une alerte (BUG TROUVE
+// 2026-09-02 : "PDF 235ba2d993412437e8f9019f117986ab" est illisible/impossible a
+// chercher, meme piege deja corrige ailleurs via opts.fileNames, ex. UPS). Repli sur
+// path.basename(pdfPath) (le nom hash) si le nom original n'est pas fourni.
+async function extractDpdPdfTotal(pdfPath, displayName) {
   const buf = require('fs').readFileSync(pdfPath);
   const { text } = await pdfParse(buf);
   const mClient = /N°\s*de\s*client\s*:\s*([\d-]+)/i.exec(text);
@@ -98,10 +104,10 @@ async function extractDpdPdfTotal(pdfPath) {
     if (m) { totalHt = num(m[1].replace(/\s/g, '')); break; }
   }
   if (totalHt == null) return null;
-  return { file: path.basename(pdfPath), last4, totalHt };
+  return { file: displayName || path.basename(pdfPath), last4, totalHt };
 }
 
-async function process(files) {
+async function process(files, opts) {
   const paths = files.csv || [];
   if (!paths.length) throw new Error('Aucun fichier fourni (attendu : complément_facture DPD, CSV ou XLSX).');
 
@@ -265,14 +271,16 @@ async function process(files) {
   }
 
   const pdfPaths = files.pdf || [];
+  const pdfNames = (opts && opts.fileNames && opts.fileNames.pdf) || [];
   const pdfs = [];
-  for (const p of pdfPaths) {
+  for (const [i, p] of pdfPaths.entries()) {
+    const displayName = pdfNames[i] || path.basename(p);
     try {
-      const r = await extractDpdPdfTotal(p);
+      const r = await extractDpdPdfTotal(p, displayName);
       if (r) pdfs.push(r);
-      else warnings.push(`PDF ${path.basename(p)} : "N° de client" ou montant HT introuvable, ignore pour la reconciliation.`);
+      else warnings.push(`PDF ${displayName} : "N° de client" ou montant HT introuvable, ignore pour la reconciliation.`);
     } catch (e) {
-      warnings.push(`PDF ${path.basename(p)} : lecture impossible (${e.message}).`);
+      warnings.push(`PDF ${displayName} : lecture impossible (${e.message}).`);
     }
   }
   for (const p of pdfs) {

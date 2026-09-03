@@ -61,7 +61,8 @@
     "5XK": { "modeEnvoi": "5X", "zone": "5X", "transporteur": "CHRONO_2SHOP_KERSUN" },
     "5YK": { "modeEnvoi": "5Y", "zone": "5Y", "transporteur": "CHRONO_2SHOP_KERSUN" },
     "6BK": { "modeEnvoi": "6B", "zone": "6B", "transporteur": "CHRONO_2SHOP_KERSUN" },
-    "6CK": { "modeEnvoi": "6C", "zone": "6C", "transporteur": "CHRONO_2SHOP_KERSUN" }
+    "6CK": { "modeEnvoi": "6C", "zone": "6C", "transporteur": "CHRONO_2SHOP_KERSUN" },
+    "2C": { "modeEnvoi": "2", "zone": "2", "transporteur": "CHRONOPOST" }
   },
 
   "_comment_zoning2shop": "Feuille 'Zoning 2shop' -- pour produit='6B', zone reelle = lookup Pays ARRIVEE dans cette table (colonnes A/B) ; pour produit='6C', zone reelle = lookup Pays DEPART (colonnes C/D). Remplace la zone generique '6B'/'6C' de la bibliotheque -- regle speciale confirmee par formule TCD!U3.",
