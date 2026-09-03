@@ -23,25 +23,50 @@
 //  avant (RECHERCHEX cote pole transport).
 // ============================================================================
 const pdfParse = require('pdf-parse');
+const XLSX = require('xlsx');
 const path = require('path');
 const fs = require('fs');
 const { num, round2, roundUp1 } = require('../../core/csv');
 const { validate } = require('../../core/validate');
 const cfg = require('./config.json');
 
-/** Export CSV du portail "AffreTrans" (';' separe, UTF-8 avec BOM -- different du latin1
- * habituel des autres transporteurs). Cle de jointure : colonne "Récépissé" = "Dossier"
- * BLS (confirme sur juin 2026 : 13/15 lignes retrouvees directement -- 2 dossiers restent
- * sans correspondance, l'un absent de l'export, l'autre present mais sans Récépissé
- * renseigne -- PAS de rapprochement par deduction/montant, trop risque). Fournit "ID
- * Client" (deja le bon format numerique, ex. '8041'), "Poids (kg)", "Nb palettes".
- * Filtre implicitement sur Transporteur='BLS' (les autres lignes n'ont de toute facon pas
- * de Dossier BLS en Récépissé). */
-function parseAffretementCsv(csvPath) {
-  const text = fs.readFileSync(csvPath).toString('utf8').replace(/^﻿/, '');
+/** Fichiers uploades (multer) arrivent sans extension -> detection par contenu (signature
+ * ZIP), meme pattern que DPD/Geodis/Mondial Relay pour un export accepte en CSV ou XLSX. */
+function isXlsx(p) {
+  try {
+    const buf = fs.readFileSync(p, { encoding: null, flag: 'r' });
+    return buf.length > 4 && buf[0] === 0x50 && buf[1] === 0x4b; // "PK"
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Lignes brutes (header + rows) de l'export "AffreTrans", CSV (';' separe, UTF-8 avec BOM
+ * -- different du latin1 habituel des autres transporteurs) ou XLSX (memes colonnes,
+ * demande utilisateur 2026-09-03 : le portail AffreTrans peut aussi exporter en Excel). */
+function readAffretementRows(p) {
+  if (isXlsx(p)) {
+    const wb = XLSX.readFile(p, { cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    if (!rows.length) return { header: [], rows: [] };
+    return { header: rows[0].map((h) => String(h || '').trim()), rows: rows.slice(1).map((r) => r.map((v) => String(v ?? '').trim())).filter((r) => r.some((v) => v !== '')) };
+  }
+  const text = fs.readFileSync(p).toString('utf8').replace(/^﻿/, '');
   const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
-  if (!lines.length) return new Map();
-  const header = lines[0].split(';').map((h) => h.trim());
+  if (!lines.length) return { header: [], rows: [] };
+  return { header: lines[0].split(';').map((h) => h.trim()), rows: lines.slice(1).map((l) => l.split(';')) };
+}
+
+/** Export du portail "AffreTrans" (CSV ou XLSX, cf. readAffretementRows). Cle de jointure :
+ * colonne "Récépissé" = "Dossier" BLS (confirme sur juin 2026 : 13/15 lignes retrouvees
+ * directement -- 2 dossiers restent sans correspondance, l'un absent de l'export, l'autre
+ * present mais sans Récépissé renseigne -- PAS de rapprochement par deduction/montant, trop
+ * risque). Fournit "ID Client" (deja le bon format numerique, ex. '8041'), "Poids (kg)",
+ * "Nb palettes". Filtre implicitement sur Transporteur='BLS' (les autres lignes n'ont de
+ * toute facon pas de Dossier BLS en Récépissé). */
+function parseAffretementCsv(filePath) {
+  const { header, rows } = readAffretementRows(filePath);
   const iRecepisse = header.indexOf('Récépissé');
   const iIdClient = header.indexOf('ID Client');
   const iPoids = header.indexOf('Poids (kg)');
@@ -50,8 +75,7 @@ function parseAffretementCsv(csvPath) {
   if (iRecepisse < 0) return new Map();
 
   const map = new Map();
-  for (const line of lines.slice(1)) {
-    const cols = line.split(';');
+  for (const cols of rows) {
     if (iTransporteur >= 0 && (cols[iTransporteur] || '').trim().toUpperCase() !== 'BLS') continue;
     const recepisse = (cols[iRecepisse] || '').trim();
     if (!recepisse || map.has(recepisse)) continue;
@@ -394,7 +418,7 @@ module.exports = {
   method: "Bien vérifier que tous les trackings sont déjà rentrés dans l'ERP pour les différentes expé (faire le rapprochement avec le fichier affrètement) pour éviter les avaries d'imports.",
   inputs: [
     { key: 'pdf', label: 'Facture(s) PDF BLS', accept: '.pdf', multiple: true, required: true },
-    { key: 'affretement', label: 'Export "AffreTrans" (CSV, pour Id client/Nbr Colis/Poids)', accept: '.csv', multiple: false, required: true },
+    { key: 'affretement', label: 'Export "AffreTrans" (CSV ou XLSX, pour Id client/Nbr Colis/Poids)', accept: '.csv,.xlsx', multiple: false, required: true },
   ],
   // Classeur = CLONE FIDELE du fichier fait a la main (Excel COM/Python), comme DPD/Geodis/GLS/Mondial Relay.
   outputNaming: { workbook: '{period}_Facture BLS', import: '{period}_BLS_Import' },
