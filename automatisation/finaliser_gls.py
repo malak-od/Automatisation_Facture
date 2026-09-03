@@ -181,6 +181,25 @@ def main():
             pass
         xl.Calculate()
 
+        # ---- 2bis) 'Bilan factures' colonne C (TTC theorique) : BUG TROUVE 2026-09-03 -- cette
+        #    cellule N'EST NI un TCD (ne suit pas RefreshAll) NI une formule dans le modele clone,
+        #    juste une VALEUR FIGEE heritee du modele de reference (juin 2026, facture 2501382993,
+        #    HT=3069.20€) -- jamais recalculee pour le mois traite. Constate sur aout 2026 : ligne A
+        #    = facture 2501406329 (HT=1945.52€, un numero totalement different), colonne C affichait
+        #    quand meme "3069.20" (reliquat de juin), donnant l'illusion trompeuse d'un ecart HT vs
+        #    TTC theorique de ~1123€ alors qu'il s'agit de 2 factures differentes sans aucun rapport.
+        #    Ecrit ici une VRAIE formule =B{row}*1,2 (coherente avec le commentaire d'origine et la
+        #    formule vue dans la video process) sur CHAQUE ligne de facture (colonne A numerique),
+        #    pour que "Bilan factures" affiche systematiquement le bon TTC theorique du mois traite.
+        bf = wb.Sheets("Bilan factures")
+        bfLast = bf.Cells(bf.Rows.Count, 1).End(xlUp).Row
+        for r in range(4, bfLast + 1):
+            v = bf.Cells(r, 1).Value
+            if isinstance(v, (int, float)):
+                bf.Cells(r, 3).Formula = f"=B{r}*1.2"
+        xl.Calculate()
+        print("Bilan factures : colonne C (TTC theorique) recalculee en formule =B*1,2 pour chaque facture.")
+
         # ---- 3) Import csv : TOUT en formules (pas de donnees brutes a coller) -- son nombre
         #    de lignes suit le nombre de colis UNIQUES du TCD recalcule (pas n, le nb de charges
         #    brutes). On ne touche JAMAIS la ligne 2 (modele des formules pour le FillDown).
