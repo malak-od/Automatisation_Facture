@@ -120,20 +120,39 @@ function categoriePour(typePrestation) {
 /** Mode envoi / zone / Transporteur ERP pour un code produit Chrono donne, via la table
  * 'bibliotheque' + les 2 regles speciales confirmees par formule (TCD!U3) : produit
  * 6B/6C -> zone via 'Zoning 2shop' (pays arrivee/depart selon le cas) ; produit 17/44
- * -> zone = "<produit>_<zoneTarifaire>". */
-function mappingErp(produit, zoneTarifaire, paysArrivee, paysDepart) {
-  const p = String(produit || '').trim();
+ * -> zone = "<produit>_<zoneTarifaire>".
+ * Kersun : la colonne "Produit" brute contient TOUJOURS le code standard (5X/5Y/6B/6C),
+ * jamais un code suffixe "K" -- la distinction CHRONO_2SHOP vs CHRONO_2SHOP_KERSUN se
+ * fait via sous-compte = "2" (meme regle que la formule W "Code produit modifie" de
+ * finaliser_chronopost.py, cf. Automatisation/finaliser_chronopost.py commentaire ligne
+ * 26-30) -- sans ca, mappingErp() retombe toujours sur l'entree standard (transporteur
+ * CHRONO_2SHOP), le CSV import ne sort jamais CHRONO_2SHOP_KERSUN meme quand le TCD
+ * (colonne W recalculee par le Python) l'affiche bien (bug signale 2026-09-03). */
+function mappingErp(produit, zoneTarifaire, paysArrivee, paysDepart, sousCompte) {
+  const produitBrut = String(produit || '').trim();
+  const sc = String(sousCompte || '').trim();
+  let p = produitBrut;
+  if (['5X', '5Y', '6B', '6C'].includes(p)) {
+    // Meme branchement que la formule W ("Code produit modifie") de finaliser_chronopost.py :
+    // sous-compte 0/1 -> code standard tel quel ; sous-compte 2 -> suffixe K (Kersun/Foutas) ;
+    // tout autre sous-compte (5/6, jamais rencontre en pratique, cf. config.json) -> inconnu,
+    // PAS silencieusement retombe sur le code standard.
+    if (sc === '2') p += 'K';
+    else if (sc !== '0' && sc !== '1') return { modeEnvoi: 'inconnu', zone: 'inconnu', transporteur: 'inconnu' };
+  }
   const entry = cfg.bibliotheque[p];
   if (!entry) return { modeEnvoi: 'inconnu', zone: 'inconnu', transporteur: 'inconnu' };
 
+  // Zone speciale 6B/6C : comparee sur le produit BRUT (pas suffixe K) -- le lookup
+  // Zoning 2shop s'applique pareil que ce soit Kersun ou non, seul le transporteur change.
   let zone = entry.zone;
-  if (p === '6B') {
+  if (produitBrut === '6B') {
     zone = cfg.zoning_2shop[String(paysArrivee || '').trim().toUpperCase()];
     zone = zone != null ? String(zone) : 'inconnu';
-  } else if (p === '6C') {
+  } else if (produitBrut === '6C') {
     zone = cfg.zoning_2shop_6c[String(paysDepart || '').trim().toUpperCase()];
     zone = zone != null ? String(zone) : 'inconnu';
-  } else if (p === '17' || p === '44') {
+  } else if (produitBrut === '17' || produitBrut === '44') {
     zone = `${p}_${String(zoneTarifaire || '').trim()}`;
   }
   return { modeEnvoi: entry.modeEnvoi, zone, transporteur: entry.transporteur };
@@ -180,7 +199,13 @@ async function process(files) {
 
     for (const r of f.rows) {
       const facture = String(r[iFacture] || '').trim();
-      const sousCompte = String(r[iSousCompte] || '').trim();
+      // BUG TROUVE 2026-09-03 : "r[iSousCompte] || ''" traite le sous-compte 0 (La Ruche,
+      // valeur numerique 0 dans le brut XLSX) comme FALSY -> sousCompte devenait "" au lieu
+      // de "0", cassant EN SILENCE le lookup Client (cfg.sous_comptes['0']) ET, depuis
+      // l'ajout du mapping Kersun (mappingErp), le mapping Transporteur (comparaison sc==='0'
+      // echouait, tombait en "inconnu" au lieu de rester CHRONO_2SHOP standard). "??" au lieu
+      // de "||" pour ne traiter que null/undefined comme absent, pas 0.
+      const sousCompte = String(r[iSousCompte] ?? '').trim();
       const numeroLt = String(r[iNumeroLt] || '').trim();
       const montantHt = num(r[iMontantHt]);
       if (!facture || !numeroLt) continue;
@@ -241,7 +266,7 @@ async function process(files) {
     const categorie = categoriePour(l.typePrestation);
     if (!categorie) warnings.push(`Ligne ${l.numeroLt} (facture ${l.facture}) : Type prestation "${l.typePrestation}" absent de la table "Catégories" — non reclassée.`);
 
-    const map = mappingErp(l.produit, l.zoneTarifaire, l.paysArrivee, l.paysDepart);
+    const map = mappingErp(l.produit, l.zoneTarifaire, l.paysArrivee, l.paysDepart, l.sousCompte);
     if (map.modeEnvoi === 'inconnu') warnings.push(`Ligne ${l.numeroLt} (facture ${l.facture}) : produit Chrono "${l.produit}" absent de "Bibliothèque transporteurs" — mode envoi/zone/Transporteur "inconnu".`);
 
     // Gazole reparti au prorata du fret de la ligne (formule modele 'Facture Chronopost'!AB
