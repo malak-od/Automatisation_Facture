@@ -134,6 +134,22 @@ def read_csv_rows(path):
     return header, data
 
 
+def looks_like_header(row):
+    """Vrai si la ligne ressemble a un entete (texte non numerique dans la
+    majorite des cellules non vides), faux si elle ressemble a une ligne de
+    donnees (ex. '1' pour Type (Slave Export), un no de facture...). Un export
+    CSV DPD peut arriver SANS ligne d'entete du tout (constate sur un fichier
+    du lot d'aout 2026, 'complement_facture...02040...csv' -- les 6 autres
+    fichiers du meme lot en avaient un normalement) -- prendre aveuglement
+    rows[0] du premier fichier ferait passer une vraie ligne de donnees pour
+    l'entete, decalant TOUTES les colonnes A partir de FIRST_RAW_COL."""
+    cells = [str(v).strip() for v in row if v not in (None, "")]
+    if not cells:
+        return False
+    numeric = sum(1 for v in cells if re.fullmatch(r"-?\d+([.,]\d+)?", v))
+    return numeric <= len(cells) / 2
+
+
 def read_input(paths):
     """Concatene toutes les sources (CSV ou XLSX, un fichier par n° facture/
     sous-compte DPD) -> (header, data_rows). Suppose meme structure de colonnes
@@ -143,19 +159,42 @@ def read_input(paths):
     colonne No de compte) sans 'N° Colis' -- confirme sur le fichier reel (colonne
     N Colis vide sur ces lignes). Exclues ici (comme deja fait cote carrier
     Node, index.js: .filter(rec => rec.tracking)), sinon elles polluent les
-    postes calcules (Total GO) et les TCD."""
+    postes calcules (Total GO) et les TCD.
+
+    Entete : lu fichier par fichier (looks_like_header sur rows[0]) plutot que
+    suppose present sur le PREMIER fichier de la liste -- si ce premier fichier
+    est justement celui sans entete (cas reel aout 2026), la ligne 0 (une vraie
+    ligne de donnees) etait a tort utilisee comme entete pour TOUT le lot,
+    perdant cette ligne ET decalant les postes calcules (A->N, cherches par nom
+    dans cet entete faux) pour tous les fichiers. Ici : header = le premier
+    entete VALIDE trouve parmi les fichiers ; un fichier sans entete propre
+    garde toutes ses lignes comme donnees."""
     header = None
-    all_rows = []
+    per_file = []
     for p in paths:
         result = read_xlsx_rows(p) if is_xlsx(p) else read_csv_rows(p)
         if result is None:
             raise RuntimeError(f"Fichier vide ou illisible : {p}")
         h, rows = result
-        if header is None:
+        per_file.append((p, h, rows))
+        if header is None and looks_like_header(h):
             header = h
-        ncol = len(header)
-        i_colis = next((i for i, name in enumerate(header) if compare_key(name) == compare_key("N° Colis")), None)
-        for r in rows:
+    if header is None:
+        # Aucun fichier n'avait d'entete exploitable -> repli sur le premier
+        # (comportement historique), au moins signale au lieu de planter.
+        header = per_file[0][1]
+        print(f"AVERTISSEMENT: aucun fichier DPD n'a d'entete de colonnes reconnaissable, "
+              f"repli sur l'entete du premier fichier ({os.path.basename(paths[0])}) -- a verifier.")
+
+    ncol = len(header)
+    i_colis = next((i for i, name in enumerate(header) if compare_key(name) == compare_key("N° Colis")), None)
+    all_rows = []
+    for p, h, rows in per_file:
+        # Fichier dont la ligne 0 N'ETAIT PAS un entete (looks_like_header faux)
+        # -> elle a deja ete lue comme entete par read_*_rows, on la reintegre
+        # comme premiere ligne de donnees pour ne pas la perdre.
+        file_rows = rows if looks_like_header(h) else [h] + rows
+        for r in file_rows:
             r = (list(r) + [None] * ncol)[:ncol]
             if i_colis is not None and not str(r[i_colis] or "").strip():
                 continue
