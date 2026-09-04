@@ -236,7 +236,11 @@ async function process(files, opts) {
     ZonesEloignees: rec.postes.ZonesEloignees, ColisVolumineux: rec.postes.ColisVolumineux,
     Adresses: rec.adressesFinal,
     Fret: rec.fretFinal,
-    PlusValueB2C: rec.postes.BtoC, TaxeGasoil: rec.postes.Gazole,
+    // TaxeGasoil volontairement PAS reportee dans l'import (confirme sur la
+    // video process DPD_1 : colonne Gazole vide dans le CSV ERP final, la
+    // taxe gasoil reste visible uniquement dans 'Facture DPD', feuille de
+    // controle -- meme regle que l'onglet Import ERP du xlsx).
+    PlusValueB2C: rec.postes.BtoC, TaxeGasoil: '',
     NbColis: '',
   }));
 
