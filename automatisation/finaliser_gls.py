@@ -206,6 +206,20 @@ def main():
         xl.Calculate()
         print("Bilan factures : colonne C (TTC theorique) recalculee en formule =B*1,2 pour chaque facture, colonne D (reliquat manuel) purgee.")
 
+        # ---- 2ter) 'Bilan clients' colonnes E/F ("Facture pdf"/"Montant") : meme
+        #    piege que 2bis, en pire -- pas une valeur figee du mois precedent mais
+        #    un CONTROLE PONCTUEL fait a la main en NOVEMBRE 2022 (note "novembre
+        #    2022 -> ok" en G15 du modele), donc totalement sans rapport avec le
+        #    mois traite. Contrairement a "Bilan factures" (1 ligne = 1 facture),
+        #    la colonne A ici est un NUMERO DE COMPTE GLS (pas une facture) -> pas
+        #    d'appariement facture<->PDF possible sur cette feuille. Purge demandee
+        #    par l'utilisateur plutot que d'inventer une reconciliation non
+        #    documentee (aucune video/doc ne couvre ce bloc).
+        bc = wb.Sheets("Bilan clients")
+        bcLast = bc.Cells(bc.Rows.Count, 1).End(xlUp).Row
+        retry(lambda: bc.Range(bc.Cells(2, 5), bc.Cells(max(bcLast, 2), 7)).ClearContents())
+        print("Bilan clients : colonnes E-G (reliquat de controle manuel novembre 2022) purgees.")
+
         # ---- 3) Import csv : TOUT en formules (pas de donnees brutes a coller) -- son nombre
         #    de lignes suit le nombre de colis UNIQUES du TCD recalcule (pas n, le nb de charges
         #    brutes). On ne touche JAMAIS la ligne 2 (modele des formules pour le FillDown).
