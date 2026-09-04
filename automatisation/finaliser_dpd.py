@@ -552,6 +552,13 @@ def main():
         # exemple de juin sur TOUTES les lignes de donnees du mois traite.
         LAST_COL_IMPORT_ERP = 22
         oldLastImp = wsImp.Cells(wsImp.Rows.Count, 6).End(xlUp).Row  # col F = N Tracking
+        # BUG TROUVE 2026-09-04 : colonne V (Gazole) du modele n'a JAMAIS eu de
+        # formule en ligne 2 (deja absente dans le modele clone de juin 2026,
+        # confirme aussi sur juillet/aout deja generes) -> le FillDown plus bas
+        # recopiait du vide sur tout le mois, alors que 'Facture DPD'!L (Gazole)
+        # est bien remplie. On (re)pose la formule ici avant chaque FillDown, au
+        # lieu de modifier le modele Excel fait-main (demande utilisateur).
+        wsImp.Cells(2, LAST_COL_IMPORT_ERP).Formula = "=IF('Facture DPD'!L2=0,\"\",'Facture DPD'!L2)"
         if date_validite_serial is not None:
             wsImp.Cells(2, 2).Value = date_validite_serial
         else:
