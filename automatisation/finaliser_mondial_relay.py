@@ -184,14 +184,20 @@ def build_facture_formulas(header, first_raw_col):
 
 
 def read_header_style(modele_path):
+    """None si le modele n'a PAS de remplissage/couleur de police reel (cellule
+    'sans couleur' dans Excel) : cell.fill.fgColor.rgb vaut par defaut '00000000'
+    meme quand patternType est None (pas de remplissage du tout) -- l'interpreter
+    comme un vrai noir applique un fond noir sur une cellule qui n'en avait pas
+    (constate sur Mondial Relay : combine a une police elle aussi sans couleur
+    definie -> fallback noir -> texte noir illisible sur fond noir)."""
     import openpyxl
     wb = openpyxl.load_workbook(modele_path)
     ws = wb["Facture Mondial Relay"]
     cell = ws.cell(row=1, column=FIRST_RAW_COL)
-    fill = cell.fill.fgColor.rgb if cell.fill and cell.fill.fgColor else None
+    fill = cell.fill.fgColor.rgb if cell.fill and cell.fill.patternType else None
     font = cell.font.color.rgb if cell.font and cell.font.color else None
     wb.close()
-    return (fill if isinstance(fill, str) else "FFD9D9D9"), (font if isinstance(font, str) else "FF000000")
+    return (fill if isinstance(fill, str) else None), (font if isinstance(font, str) else None)
 
 
 def argb_to_com_bgr(argb):
@@ -429,8 +435,10 @@ def main():
         retry(lambda: ws.Range(ws.Cells(1, FIRST_RAW_COL), ws.Cells(maxLast, maxCol)).ClearContents())
         retry(lambda: ws.Range(ws.Cells(1, FIRST_RAW_COL), ws.Cells(1, lastCol)).__setattr__("Value", [header]))
         headerRange = ws.Range(ws.Cells(1, FIRST_RAW_COL), ws.Cells(1, lastCol))
-        headerRange.Interior.Color = argb_to_com_bgr(header_fill)
-        headerRange.Font.Color = argb_to_com_bgr(header_font)
+        if header_fill is not None:
+            headerRange.Interior.Color = argb_to_com_bgr(header_fill)
+        if header_font is not None:
+            headerRange.Font.Color = argb_to_com_bgr(header_font)
         retry(lambda: ws.Range(ws.Cells(2, FIRST_RAW_COL), ws.Cells(newLast, lastCol)).__setattr__("Value", data))
 
         # Colonnes A->D : Clients (lookup Comptes), Taxe gazole, Nb car tracking, Tracking (padding).
