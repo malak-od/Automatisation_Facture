@@ -197,8 +197,14 @@ def main():
             v = bf.Cells(r, 1).Value
             if isinstance(v, (int, float)):
                 bf.Cells(r, 3).Formula = f"=B{r}*1.2"
+                # Colonne D : autre reliquat du modele juin ("ok", saisie manuelle
+                # validant l'ancienne valeur figee de C) -- n'a plus de sens
+                # maintenant que C est une vraie formule recalculee ci-dessus,
+                # purgee pour ne pas laisser un "ok" trompeur sur un autre mois/
+                # une autre facture (constate sur aout 2026).
+                bf.Cells(r, 4).ClearContents()
         xl.Calculate()
-        print("Bilan factures : colonne C (TTC theorique) recalculee en formule =B*1,2 pour chaque facture.")
+        print("Bilan factures : colonne C (TTC theorique) recalculee en formule =B*1,2 pour chaque facture, colonne D (reliquat manuel) purgee.")
 
         # ---- 3) Import csv : TOUT en formules (pas de donnees brutes a coller) -- son nombre
         #    de lignes suit le nombre de colis UNIQUES du TCD recalcule (pas n, le nb de charges
