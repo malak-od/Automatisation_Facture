@@ -18,3 +18,25 @@ __pycache__/
 tmp_*.xlsx
 ~$*.docx
 ~$*.xlsx
+
+# Donnees reelles (factures PDF, exports/classeurs de test) sous Transporteurs/ --
+# PAS Documentation/ (guides/docs metier, legitimes a versionner). Les classeurs
+# "modele de reference" (ex. Transporteurs/DPD/2026_06_Facture DPD.xlsx) restent
+# des dependances du code (template charge par chaque finaliser_<carrier>.py) ->
+# exceptions explicites ci-dessous, un negatif par transporteur/modele connu.
+Transporteurs/**/*.pdf
+Transporteurs/**/*.PDF
+Transporteurs/**/*.xlsx
+Transporteurs/**/*.xls
+!Transporteurs/BLS/2026_06_Facture BLS.xlsx
+!Transporteurs/TNT/2026_06_Facture TNT.xlsx
+!Transporteurs/Geodis/2026_06_Facture Geodis.xlsx
+!Transporteurs/Delivengo/2026_06_Delivengo_LPPAQ.xlsx
+!Transporteurs/GLS/2026_06_Facture GLS.xlsx
+!Transporteurs/Mondial Relay/2026_06_Facture Mondial Relay.xlsx
+!Transporteurs/Chronopost/2026_06_Facture Chronopost.xlsx
+!Transporteurs/Colissimo/2026_06_Facture Colissimo.xlsx
+!Transporteurs/Fedex/2026_06_Facture Fedex.xlsx
+!Transporteurs/DPD/2026_06_Facture DPD.xlsx
+!Transporteurs/UPS/2026_06_Facture UPS.xlsx
+!Transporteurs/Kuehne/2026_06_Facture Kuehne.xlsx
