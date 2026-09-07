@@ -18,10 +18,10 @@ Classeur reel (11 feuilles) :
     unicolis, (vide)). Colonnes P-S = reconciliation (Total/Gazole/Hors gazole/Ecart).
   Bilan factures / Bilan clients : TCD sources sur Facture GLS / TCD. "Bilan factures"
     = 1 ligne par n. de FACTURE GLS (colonne A du pivot), col B = Somme de Total HT,
-    col C = TTC (formule =B*1,2, calcul theorique). Reconciliation PDF (video process,
-    verification VISUELLE : TTC calcule compare au "Montant T.T.C." de la facture PDF) :
-    on colle le TTC extrait du PDF en colonne E (le n. de facture du nom de fichier
-    PDF sert a apparier la bonne ligne) + l'ecart en colonne F.
+    col C = videe (plus de calcul theorique B*1,2, decision utilisateur 2026-09-07).
+    Reconciliation PDF : on colle le TTC extrait du "Montant T.T.C." de la facture
+    PDF en colonne E (le n. de facture du nom de fichier PDF sert a apparier la
+    bonne ligne) + l'ecart (Total HT - TTC PDF) en colonne F.
   Import csv : 1 ligne par colis (=TCD!D{n+1}), formules XLOOKUP vers Facture GLS/
     Zoning/Poids/TCD -- son nombre de lignes depend du TCD (donc du nombre de colis
     UNIQUES), pas du nombre de lignes CSV brutes -> etendu APRES le RefreshAll().
@@ -105,9 +105,9 @@ def pdf_facture_numero(pdf_path):
 def fill_reconciliation(wb, pdf_paths):
     """Onglet 'Bilan factures' : colle le TTC extrait de chaque PDF (colonne E) en
     face de sa ligne (appariee par n. de facture, colonne A), + ecart en colonne F.
-    Ecart = TTC THEORIQUE (B*1,2, comme la formule video =Bn*1,2) moins le TTC PDF --
-    PAS colonne C, qui dans le fichier de reference actuel contient une valeur figee
-    (semble etre une saisie manuelle, egale au HT et non au TTC calcule)."""
+    Ecart = Total HT (B, colonne 'Somme de Total HT') moins le TTC PDF (E) --
+    decision utilisateur 2026-09-07 : plus de calcul theorique B*1,2 nulle part
+    dans cette feuille (colonne C laissee vide, cf. bloc 2bis de main())."""
     bf = wb.Sheets("Bilan factures")
     bf.Cells(3, 5).Value = "TTC (PDF)"
     bf.Cells(3, 6).Value = "Ecart"
@@ -129,7 +129,7 @@ def fill_reconciliation(wb, pdf_paths):
             print(f"Reconciliation GLS : facture {num} (PDF {os.path.basename(p)}) absente de 'Bilan factures'")
             continue
         bf.Cells(row, 5).Value = ttc
-        bf.Cells(row, 6).Formula = f"=(B{row}*1.2)-E{row}"
+        bf.Cells(row, 6).Formula = f"=B{row}-E{row}"
         matched += 1
         print(f"Reconciliation GLS : facture {num} -> TTC PDF={ttc}")
     print(f"Reconciliation GLS : {matched}/{len(pdf_paths)} PDF apparies")
@@ -202,30 +202,29 @@ def main():
             pass
         xl.Calculate()
 
-        # ---- 2bis) 'Bilan factures' colonne C (TTC theorique) : BUG TROUVE 2026-09-03 -- cette
-        #    cellule N'EST NI un TCD (ne suit pas RefreshAll) NI une formule dans le modele clone,
-        #    juste une VALEUR FIGEE heritee du modele de reference (juin 2026, facture 2501382993,
-        #    HT=3069.20€) -- jamais recalculee pour le mois traite. Constate sur aout 2026 : ligne A
-        #    = facture 2501406329 (HT=1945.52€, un numero totalement different), colonne C affichait
-        #    quand meme "3069.20" (reliquat de juin), donnant l'illusion trompeuse d'un ecart HT vs
-        #    TTC theorique de ~1123€ alors qu'il s'agit de 2 factures differentes sans aucun rapport.
-        #    Ecrit ici une VRAIE formule =B{row}*1,2 (coherente avec le commentaire d'origine et la
-        #    formule vue dans la video process) sur CHAQUE ligne de facture (colonne A numerique),
-        #    pour que "Bilan factures" affiche systematiquement le bon TTC theorique du mois traite.
+        # ---- 2bis) 'Bilan factures' colonnes C/D : BUG TROUVE 2026-09-03 -- ces
+        #    cellules NE SONT NI un TCD (ne suivent pas RefreshAll) NI des formules
+        #    dans le modele clone, juste des VALEURS FIGEES heritees du modele de
+        #    reference (juin 2026, facture 2501382993) -- jamais recalculees pour
+        #    le mois traite. Un premier fix (2026-09-03) avait pose une formule
+        #    =B*1,2 en C ; decision utilisateur 2026-09-07 : plus de calcul
+        #    theorique B*1,2 nulle part dans cette feuille -> colonne C simplement
+        #    videe pour chaque ligne de facture, l'ecart (colonne F, cf.
+        #    fill_reconciliation) se basant desormais directement sur B (Total HT)
+        #    vs E (TTC PDF).
         bf = wb.Sheets("Bilan factures")
         bfLast = bf.Cells(bf.Rows.Count, 1).End(xlUp).Row
         for r in range(4, bfLast + 1):
             v = bf.Cells(r, 1).Value
             if isinstance(v, (int, float)):
-                bf.Cells(r, 3).Formula = f"=B{r}*1.2"
+                bf.Cells(r, 3).ClearContents()
                 # Colonne D : autre reliquat du modele juin ("ok", saisie manuelle
-                # validant l'ancienne valeur figee de C) -- n'a plus de sens
-                # maintenant que C est une vraie formule recalculee ci-dessus,
-                # purgee pour ne pas laisser un "ok" trompeur sur un autre mois/
-                # une autre facture (constate sur aout 2026).
+                # validant l'ancienne valeur figee de C) -- purgee pour ne pas
+                # laisser un "ok" trompeur sur un autre mois/une autre facture
+                # (constate sur aout 2026).
                 bf.Cells(r, 4).ClearContents()
         xl.Calculate()
-        print("Bilan factures : colonne C (TTC theorique) recalculee en formule =B*1,2 pour chaque facture, colonne D (reliquat manuel) purgee.")
+        print("Bilan factures : colonne C (TTC theorique, valeur figee du modele) et colonne D (reliquat manuel) purgees.")
 
         # ---- 2ter) 'Bilan clients' colonnes E/F ("Facture pdf"/"Montant") : meme
         #    piege que 2bis, en pire -- pas une valeur figee du mois precedent mais
