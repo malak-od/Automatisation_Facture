@@ -235,9 +235,18 @@ def main():
         #    d'appariement facture<->PDF possible sur cette feuille. Purge demandee
         #    par l'utilisateur plutot que d'inventer une reconciliation non
         #    documentee (aucune video/doc ne couvre ce bloc).
+        #    BUG TROUVE 2026-09-07 : bcLast etait calcule sur la colonne A (qui n'a
+        #    que 2 lignes, "(vide)" en ligne 2, le TCD n'ayant qu'une seule
+        #    categorie ce mois-ci) -> la purge s'arretait a la ligne 2, laissant
+        #    intact tout le reliquat E3:G15 (visible sur aout 2026 : "2,501E+09"/
+        #    "17,73" en E3/F3 + la note "novembre 2022 -> ok" en E15/F15/G15).
+        #    On calcule desormais la derniere ligne sur la colonne E elle-meme
+        #    (ou F/G), la ou vit reellement le reliquat a purger.
         bc = wb.Sheets("Bilan clients")
-        bcLast = bc.Cells(bc.Rows.Count, 1).End(xlUp).Row
-        retry(lambda: bc.Range(bc.Cells(2, 5), bc.Cells(max(bcLast, 2), 7)).ClearContents())
+        bcLastCol = bc.Cells(bc.Rows.Count, 5).End(xlUp).Row
+        for col in (6, 7):
+            bcLastCol = max(bcLastCol, bc.Cells(bc.Rows.Count, col).End(xlUp).Row)
+        retry(lambda: bc.Range(bc.Cells(2, 5), bc.Cells(max(bcLastCol, 2), 7)).ClearContents())
         print("Bilan clients : colonnes E-G (reliquat de controle manuel novembre 2022) purgees.")
 
         # ---- 3) Import csv : TOUT en formules (pas de donnees brutes a coller) -- son nombre
