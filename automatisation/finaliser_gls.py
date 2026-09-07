@@ -56,6 +56,27 @@ def load_rows(csv_paths):
             rows.append(r[:len(hdr)])
     return hdr, rows
 
+def first_day_of_month_serial(header, rows, date_col_name="Date jour"):
+    """1er jour du mois de la premiere 'Date jour' trouvee (format brut GLS,
+    JJ.MM.AAAA), en NOMBRE SERIEL Excel -- utilise pour 'Import csv'!C2 ('Date
+    validite tarif'), une valeur FIXE saisie a la main dans le modele (=C2
+    recopie sur les lignes suivantes) qui reste sinon bloquee sur le mois du
+    modele (juin) meme en traitant un autre mois (constate sur aout 2026,
+    meme piege deja corrige sur DPD/Mondial Relay)."""
+    import datetime as _dt
+    i = next((idx for idx, name in enumerate(header) if name.strip().lower() == date_col_name.strip().lower()), None)
+    if i is None:
+        return None
+    EXCEL_EPOCH = _dt.datetime(1899, 12, 30)
+    for r in rows:
+        v = r[i] if i < len(r) else None
+        if v not in (None, ""):
+            m = re.match(r"^(\d{2})\.(\d{2})\.(\d{4})$", str(v).strip())
+            if m:
+                first = _dt.datetime(int(m.group(3)), int(m.group(2)), 1)
+                return (first - EXCEL_EPOCH).days
+    return None
+
 def extract_pdf_ttc(pdf_path):
     """Montant T.T.C. de la facture GLS (libelle explicite dans le PDF, cf. video process
     p.ex. '3\xa0683,04Montant T.T.C.:') -- prend la 1ere occurrence trouvee (recap en
@@ -230,6 +251,18 @@ def main():
         print(f"Import csv : {nbColis} colis uniques (TCD, lignes 4..{tcdLast})")
 
         imp = wb.Sheets("Import csv")
+        # C2 ('Date validite tarif') : VALEUR FIXE saisie a la main dans le
+        # modele (C3+ = "=C2" recopie par le FillDown ci-dessous) -> mise a
+        # jour vers le 1er du mois traite AVANT le FillDown, sinon elle reste
+        # bloquee sur le mois du modele (juin) quel que soit le mois traite
+        # (constate sur aout 2026, meme piege deja corrige sur DPD/Mondial
+        # Relay). Source : colonne 'Date jour' du CSV BCF brut.
+        date_validite_serial = first_day_of_month_serial(hdr, rows)
+        if date_validite_serial is not None:
+            imp.Cells(2, 3).Value = date_validite_serial
+        else:
+            print("AVERTISSEMENT: 'Date jour' introuvable dans le CSV BCF -> "
+                  "'Date validité tarif' (Import csv!C2) non mise à jour, reste celle du modèle.")
         impOldLast = imp.Cells(imp.Rows.Count, 7).End(xlUp).Row  # colonne G = Tracking
         if impNewLast > impOldLast:
             retry(lambda: imp.Range(imp.Cells(2, 1), imp.Cells(impNewLast, LAST_COL_IMPORT_CSV)).FillDown())
