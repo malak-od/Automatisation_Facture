@@ -181,7 +181,10 @@ function process(files) {
       DroitsTaxes: 0, Assurance: 0,
       ZonesEloignees: g.postes.ZonesEloignees, ColisVolumineux: g.postes.ColisVolumineux,
       Adresses: g.postes.Adresses, Fret: g.postes.Fret, PlusValueB2C: 0,
-      TaxeGasoil: g.postes.TaxeGasoil, NbColis: '',
+      // TaxeGasoil volontairement PAS reportee dans l'import (decision utilisateur
+      // 2026-09-08, meme regle que DPD) -- la taxe gasoil reste visible uniquement
+      // dans 'Facture GLS' / le controle (rawCompRow, POSTE_KEYS), pas dans l'import.
+      TaxeGasoil: '', NbColis: '',
     };
   });
 
