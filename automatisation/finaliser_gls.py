@@ -17,11 +17,13 @@ Classeur reel (11 feuilles) :
     Frais de gestion, Fret, Fret-avise, Fret-retour, Zone eloignee, ZZ_Ramasse
     unicolis, (vide)). Colonnes P-S = reconciliation (Total/Gazole/Hors gazole/Ecart).
   Bilan factures / Bilan clients : TCD sources sur Facture GLS / TCD. "Bilan factures"
-    = 1 ligne par n. de FACTURE GLS (colonne A du pivot), col B = Somme de Total HT,
-    col C = videe (plus de calcul theorique B*1,2, decision utilisateur 2026-09-07).
-    Reconciliation PDF : on colle le TTC extrait du "Montant T.T.C." de la facture
-    PDF en colonne E (le n. de facture du nom de fichier PDF sert a apparier la
-    bonne ligne) + l'ecart (Total HT - TTC PDF) en colonne F.
+    = 1 ligne par n. de FACTURE GLS (colonne A du pivot), col B = Somme de Total HT.
+    Sans PDF fourni, col C/D restent vides (plus de calcul theorique B*1,2, decision
+    utilisateur 2026-09-07). Reconciliation PDF (fill_reconciliation) : colle le HT
+    extrait du "Montant H.T." en colonne C, un message "ok"/"pas bien" en colonne D
+    (B=C a l'arrondi au centime pres), le TTC extrait du "Montant T.T.C." en colonne
+    E (n. de facture du nom de fichier PDF sert a apparier la bonne ligne) + l'ecart
+    (Total HT - TTC PDF) en colonne F.
   Import csv : 1 ligne par colis (=TCD!D{n+1}), formules XLOOKUP vers Facture GLS/
     Zoning/Poids/TCD -- son nombre de lignes depend du TCD (donc du nombre de colis
     UNIQUES), pas du nombre de lignes CSV brutes -> etendu APRES le RefreshAll().
@@ -77,10 +79,7 @@ def first_day_of_month_serial(header, rows, date_col_name="Date jour"):
                 return (first - EXCEL_EPOCH).days
     return None
 
-def extract_pdf_ttc(pdf_path):
-    """Montant T.T.C. de la facture GLS (libelle explicite dans le PDF, cf. video process
-    p.ex. '3\xa0683,04Montant T.T.C.:') -- prend la 1ere occurrence trouvee (recap en
-    page 0, identique au recap final)."""
+def _extract_pdf_montant(pdf_path, label_regex):
     try:
         import pypdf
     except ImportError:
@@ -91,10 +90,21 @@ def extract_pdf_ttc(pdf_path):
         return None
     for page in r.pages:
         txt = page.extract_text() or ""
-        m = re.search(r"(?:^|\n)(\d[\d\s\xa0]*,\d{2})\s*Montant T\.T\.C\.:", txt)
+        m = re.search(r"(?:^|\n)(\d[\d\s\xa0]*,\d{2})\s*" + label_regex, txt)
         if m:
             return float(m.group(1).replace("\xa0", "").replace(" ", "").replace(",", "."))
     return None
+
+def extract_pdf_ttc(pdf_path):
+    """Montant T.T.C. de la facture GLS (libelle explicite dans le PDF, cf. video process
+    p.ex. '3\xa0683,04Montant T.T.C.:') -- prend la 1ere occurrence trouvee (recap en
+    page 0, identique au recap final)."""
+    return _extract_pdf_montant(pdf_path, r"Montant T\.T\.C\.:")
+
+def extract_pdf_ht(pdf_path):
+    """Montant H.T. de la facture GLS (libelle explicite, ex. '3\xa0069,20 Montant
+    H.T.: ' -- constate en derniere page, recapitulatif final, juste avant le TTC)."""
+    return _extract_pdf_montant(pdf_path, r"Montant H\.T\.:")
 
 def pdf_facture_numero(pdf_path):
     """N. de facture GLS (colonne 'Facture' de Facture GLS / colonne A de Bilan
@@ -103,12 +113,15 @@ def pdf_facture_numero(pdf_path):
     return int(m.group(2)) if m else None
 
 def fill_reconciliation(wb, pdf_paths):
-    """Onglet 'Bilan factures' : colle le TTC extrait de chaque PDF (colonne E) en
-    face de sa ligne (appariee par n. de facture, colonne A), + ecart en colonne F.
-    Ecart = Total HT (B, colonne 'Somme de Total HT') moins le TTC PDF (E) --
-    decision utilisateur 2026-09-07 : plus de calcul theorique B*1,2 nulle part
-    dans cette feuille (colonne C laissee vide, cf. bloc 2bis de main())."""
+    """Onglet 'Bilan factures' : colle le HT extrait de chaque PDF (colonne C) et le
+    TTC (colonne E) en face de sa ligne (appariee par n. de facture, colonne A).
+    Colonne D : message 'ok' si le Total HT calcule (B) egale le HT du PDF (C) a
+    l'arrondi au centime pres, 'pas bien' sinon -- decision utilisateur 2026-09-08.
+    Colonne F (Ecart) = Total HT (B) moins le TTC PDF (E), inchange (decision
+    utilisateur 2026-09-07 : plus de calcul theorique B*1,2 nulle part ici)."""
     bf = wb.Sheets("Bilan factures")
+    bf.Cells(3, 3).Value = "HT"
+    bf.Cells(3, 4).Value = "Controle"
     bf.Cells(3, 5).Value = "TTC (PDF)"
     bf.Cells(3, 6).Value = "Ecart"
     lastRow = bf.Cells(bf.Rows.Count, 1).End(-4162).Row  # xlUp
@@ -120,18 +133,23 @@ def fill_reconciliation(wb, pdf_paths):
     matched = 0
     for p in pdf_paths:
         num = pdf_facture_numero(p)
+        ht = extract_pdf_ht(p)
         ttc = extract_pdf_ttc(p)
-        if num is None or ttc is None:
-            print(f"Reconciliation GLS : PDF ignore (n. facture ou TTC introuvable) -> {os.path.basename(p)}")
+        if num is None or (ht is None and ttc is None):
+            print(f"Reconciliation GLS : PDF ignore (n. facture, HT et TTC introuvables) -> {os.path.basename(p)}")
             continue
         row = numeros.get(num)
         if row is None:
             print(f"Reconciliation GLS : facture {num} (PDF {os.path.basename(p)}) absente de 'Bilan factures'")
             continue
-        bf.Cells(row, 5).Value = ttc
+        if ht is not None:
+            bf.Cells(row, 3).Value = ht
+            bf.Cells(row, 4).Formula = f'=IF(ROUND(B{row},2)=ROUND(C{row},2),"ok","pas bien")'
+        if ttc is not None:
+            bf.Cells(row, 5).Value = ttc
         bf.Cells(row, 6).Formula = f"=B{row}-E{row}"
         matched += 1
-        print(f"Reconciliation GLS : facture {num} -> TTC PDF={ttc}")
+        print(f"Reconciliation GLS : facture {num} -> HT PDF={ht}, TTC PDF={ttc}")
     print(f"Reconciliation GLS : {matched}/{len(pdf_paths)} PDF apparies")
 
 def retry(fn, tries=8, delay=0.6):
@@ -206,25 +224,20 @@ def main():
         #    cellules NE SONT NI un TCD (ne suivent pas RefreshAll) NI des formules
         #    dans le modele clone, juste des VALEURS FIGEES heritees du modele de
         #    reference (juin 2026, facture 2501382993) -- jamais recalculees pour
-        #    le mois traite. Un premier fix (2026-09-03) avait pose une formule
-        #    =B*1,2 en C ; decision utilisateur 2026-09-07 : plus de calcul
-        #    theorique B*1,2 nulle part dans cette feuille -> colonne C simplement
-        #    videe pour chaque ligne de facture, l'ecart (colonne F, cf.
-        #    fill_reconciliation) se basant desormais directement sur B (Total HT)
-        #    vs E (TTC PDF).
+        #    le mois traite. Purgees ici (avant tout) pour repartir propre ; si un
+        #    PDF est fourni, fill_reconciliation() les repeuple ensuite avec le
+        #    vrai HT du PDF (C) et le message ok/pas bien (D, cf. fonction) --
+        #    decision utilisateur 2026-09-08. Sans PDF, elles restent vides (plus
+        #    de calcul theorique B*1,2, decision utilisateur 2026-09-07).
         bf = wb.Sheets("Bilan factures")
         bfLast = bf.Cells(bf.Rows.Count, 1).End(xlUp).Row
         for r in range(4, bfLast + 1):
             v = bf.Cells(r, 1).Value
             if isinstance(v, (int, float)):
                 bf.Cells(r, 3).ClearContents()
-                # Colonne D : autre reliquat du modele juin ("ok", saisie manuelle
-                # validant l'ancienne valeur figee de C) -- purgee pour ne pas
-                # laisser un "ok" trompeur sur un autre mois/une autre facture
-                # (constate sur aout 2026).
                 bf.Cells(r, 4).ClearContents()
         xl.Calculate()
-        print("Bilan factures : colonne C (TTC theorique, valeur figee du modele) et colonne D (reliquat manuel) purgees.")
+        print("Bilan factures : colonnes C/D (valeurs figees du modele) purgees.")
 
         # ---- 2ter) 'Bilan clients' colonnes E/F ("Facture pdf"/"Montant") : meme
         #    piege que 2bis, en pire -- pas une valeur figee du mois precedent mais
