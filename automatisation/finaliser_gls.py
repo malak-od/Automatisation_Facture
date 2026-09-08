@@ -22,8 +22,9 @@ Classeur reel (11 feuilles) :
     utilisateur 2026-09-07). Reconciliation PDF (fill_reconciliation) : colle le HT
     extrait du "Montant H.T." en colonne C, un message "ok"/"pas bien" en colonne D
     (B=C a l'arrondi au centime pres), le TTC extrait du "Montant T.T.C." en colonne
-    E (n. de facture du nom de fichier PDF sert a apparier la bonne ligne) + l'ecart
-    (Total HT - TTC PDF) en colonne F.
+    E -- appariement par n. de facture lu dans le CONTENU du PDF (motif '<10
+    chiffres>Document'), pas le nom de fichier (perdu par multer via l'app web).
+    Colonne F (Ecart) supprimee (decision utilisateur 2026-09-08).
   Import csv : 1 ligne par colis (=TCD!D{n+1}), formules XLOOKUP vers Facture GLS/
     Zoning/Poids/TCD -- son nombre de lignes depend du TCD (donc du nombre de colis
     UNIQUES), pas du nombre de lignes CSV brutes -> etendu APRES le RefreshAll().
@@ -138,13 +139,12 @@ def fill_reconciliation(wb, pdf_paths):
     TTC (colonne E) en face de sa ligne (appariee par n. de facture, colonne A).
     Colonne D : message 'ok' si le Total HT calcule (B) egale le HT du PDF (C) a
     l'arrondi au centime pres, 'pas bien' sinon -- decision utilisateur 2026-09-08.
-    Colonne F (Ecart) = Total HT (B) moins le TTC PDF (E), inchange (decision
-    utilisateur 2026-09-07 : plus de calcul theorique B*1,2 nulle part ici)."""
+    Colonne F (Ecart) supprimee -- decision utilisateur 2026-09-08."""
     bf = wb.Sheets("Bilan factures")
     bf.Cells(3, 3).Value = "HT"
     bf.Cells(3, 4).Value = "Controle"
     bf.Cells(3, 5).Value = "TTC (PDF)"
-    bf.Cells(3, 6).Value = "Ecart"
+    bf.Cells(3, 6).ClearContents()
     lastRow = bf.Cells(bf.Rows.Count, 1).End(-4162).Row  # xlUp
     numeros = {}
     for r in range(4, lastRow + 1):
@@ -168,7 +168,7 @@ def fill_reconciliation(wb, pdf_paths):
             bf.Cells(row, 4).Formula = f'=IF(ROUND(B{row},2)=ROUND(C{row},2),"ok","pas bien")'
         if ttc is not None:
             bf.Cells(row, 5).Value = ttc
-        bf.Cells(row, 6).Formula = f"=B{row}-E{row}"
+        bf.Cells(row, 6).ClearContents()
         matched += 1
         print(f"Reconciliation GLS : facture {num} -> HT PDF={ht}, TTC PDF={ttc}")
     print(f"Reconciliation GLS : {matched}/{len(pdf_paths)} PDF apparies")
@@ -241,15 +241,14 @@ def main():
             pass
         xl.Calculate()
 
-        # ---- 2bis) 'Bilan factures' colonnes C/D : BUG TROUVE 2026-09-03 -- ces
+        # ---- 2bis) 'Bilan factures' colonnes C/D/F : BUG TROUVE 2026-09-03 -- ces
         #    cellules NE SONT NI un TCD (ne suivent pas RefreshAll) NI des formules
         #    dans le modele clone, juste des VALEURS FIGEES heritees du modele de
         #    reference (juin 2026, facture 2501382993) -- jamais recalculees pour
         #    le mois traite. Purgees ici (avant tout) pour repartir propre ; si un
-        #    PDF est fourni, fill_reconciliation() les repeuple ensuite avec le
-        #    vrai HT du PDF (C) et le message ok/pas bien (D, cf. fonction) --
-        #    decision utilisateur 2026-09-08. Sans PDF, elles restent vides (plus
-        #    de calcul theorique B*1,2, decision utilisateur 2026-09-07).
+        #    PDF est fourni, fill_reconciliation() repeuple ensuite C (HT du PDF)
+        #    et D (message ok/pas bien) -- decision utilisateur 2026-09-08. F
+        #    (Ecart) supprimee (decision utilisateur 2026-09-08), toujours vide.
         bf = wb.Sheets("Bilan factures")
         bfLast = bf.Cells(bf.Rows.Count, 1).End(xlUp).Row
         for r in range(4, bfLast + 1):
@@ -257,8 +256,9 @@ def main():
             if isinstance(v, (int, float)):
                 bf.Cells(r, 3).ClearContents()
                 bf.Cells(r, 4).ClearContents()
+                bf.Cells(r, 6).ClearContents()
         xl.Calculate()
-        print("Bilan factures : colonnes C/D (valeurs figees du modele) purgees.")
+        print("Bilan factures : colonnes C/D/F (valeurs figees du modele / colonne supprimee) purgees.")
 
         # ---- 2ter) 'Bilan clients' colonnes E/F ("Facture pdf"/"Montant") : meme
         #    piege que 2bis, en pire -- pas une valeur figee du mois precedent mais
