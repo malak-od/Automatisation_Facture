@@ -108,9 +108,30 @@ def extract_pdf_ht(pdf_path):
 
 def pdf_facture_numero(pdf_path):
     """N. de facture GLS (colonne 'Facture' de Facture GLS / colonne A de Bilan
-    factures) : 2e groupe de chiffres du nom de fichier (Facture_<payeur>_<facture>_...pdf)."""
-    m = re.search(r"^Facture_(\d+)_(\d+)_", os.path.basename(pdf_path))
-    return int(m.group(2)) if m else None
+    factures). BUG TROUVE 2026-09-08 : lu depuis le NOM DE FICHIER (Facture_<payeur>_
+    <facture>_...pdf) -- fonctionne seulement si ce nom original survit jusqu'au
+    script (teste en ligne de commande, chemins nommes explicitement). Mais l'app web
+    (server.js, carriers/gls/index.js!buildArgs) passe les chemins UPLOADS bruts,
+    renommes en hex par multer SANS le nom d'origine -> le numero de facture n'etait
+    JAMAIS trouve en pratique via l'interface, PDF toujours ignore silencieusement
+    (colonnes HT/TTC vides), meme regle que DPD/Mondial Relay qui lisent deja depuis
+    le CONTENU. Lu desormais depuis le texte du PDF lui-meme (motif '<10 chiffres>
+    Document', constate sur les factures de juin et aout 2026, absent de la page 0
+    -- recap client -- present a partir de la page 1)."""
+    try:
+        import pypdf
+    except ImportError:
+        return None
+    try:
+        r = pypdf.PdfReader(pdf_path)
+    except Exception:
+        return None
+    for page in r.pages:
+        txt = page.extract_text() or ""
+        m = re.search(r"(\d{10})Document", txt)
+        if m:
+            return int(m.group(1))
+    return None
 
 def fill_reconciliation(wb, pdf_paths):
     """Onglet 'Bilan factures' : colle le HT extrait de chaque PDF (colonne C) et le
