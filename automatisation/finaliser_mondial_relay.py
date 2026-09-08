@@ -517,19 +517,20 @@ def main():
             print("AVERTISSEMENT: 'Date' introuvable dans le fichier reçu -> "
                   "'Date validité tarif' (Fichier import!B2) non mise à jour, reste celle du modèle.")
         # Q2/T2 (modele) referencent 'Facture Mondial Relay'!AH/AI (Montant transport/
-        # Complement) par POSITION FIXE avec le seuil 0,03 -- CE SEUIL EST CORRECT (verifie en
-        # recalculant les totaux sur 0,03 vs 0,08 et en comparant a 'Controle xls pdf'!K16/M16 :
-        # seul 0,03 redonne les valeurs de reference exactes, 1545.20EUR/36385.88EUR -- une
-        # premiere lecture avait conclu a tort a 0,08 en se fiant aux formules Q3/T3+ du modele,
-        # qui semblent elles-memes non representatives). Reecrites ICI uniquement pour resoudre
-        # AH/AI PAR NOM (pas position fixe -- ces lettres ne sont stables que si le nombre de
-        # colonnes brutes recues ne change jamais d'un mois a l'autre, meme piege que 'Facture
-        # Mondial Relay' elle-meme), avec le MEME seuil 0,03 que le modele.
+        # Complement) par POSITION FIXE. Seuil 0,08 -- DECISION UTILISATEUR 2026-09-07,
+        # MALGRE un ecart constate avec 'Controle xls pdf' (TCD Excel du mois de juin) :
+        # recalcul sur les 12295 lignes reelles de juin, seuil 0,03 redonnait exactement
+        # K16=1545,20EUR (Somme de Complement), seuil 0,08 donne 1022,40EUR (-522,80EUR).
+        # A ne PAS reprendre comme preuve de bug si l'ecart reapparait -- c'est le
+        # comportement voulu. Reecrites ICI uniquement pour resoudre AH/AI PAR NOM (pas
+        # position fixe -- ces lettres ne sont stables que si le nombre de colonnes
+        # brutes recues ne change jamais d'un mois a l'autre, meme piege que 'Facture
+        # Mondial Relay' elle-meme).
         if col_transport and col_complement:
             wsImp.Cells(2, 17).Formula = (f"=IF('Facture Mondial Relay'!{col_complement}2=0,\"\","
-                                           f"IF('Facture Mondial Relay'!{col_complement}2=0.03,\"\","
+                                           f"IF('Facture Mondial Relay'!{col_complement}2=0.08,\"\","
                                            f"'Facture Mondial Relay'!{col_complement}2))")
-            wsImp.Cells(2, 20).Formula = (f"=ROUND(IF('Facture Mondial Relay'!{col_complement}2=0.03,"
+            wsImp.Cells(2, 20).Formula = (f"=ROUND(IF('Facture Mondial Relay'!{col_complement}2=0.08,"
                                            f"'Facture Mondial Relay'!{col_complement}2+'Facture Mondial Relay'!{col_transport}2,"
                                            f"'Facture Mondial Relay'!{col_transport}2),2)")
         else:
