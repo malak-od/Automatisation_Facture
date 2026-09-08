@@ -1091,13 +1091,15 @@ def main():
         # Regle 1 (interdit Zone=0) : satisfaite une fois le repli Python M-1 applique -- la
         # formule Excel seule peut encore produire 0 de facon transitoire (regle 3), corrige
         # dans le bloc post-Calculate plus bas.
-        # zone_brute reference directement C{row} (colonne interne de controle, formula index 2
-        # ci-dessous) plutot que de reecrire l'expression XLOOKUP -- C{row} EST deja "IF(LEN>2,
-        # zone,'inconnu')" via son propre COUNTIF, donc equivalent a l'ancienne logique inline
-        # (LEN(C)>2 -> C ; sinon Pays=FR -> France ; sinon C tel quel, qui vaut alors "inconnu"
-        # ou un vrai zonage court) SANS reevaluer XLOOKUP plusieurs fois dans la meme formule
-        # (evite un formule M demesuree sur 6000-8700 lignes).
-        zone_brute = 'IF(LEN(C{row})>2,C{row},IF(L{row}="FR","France",C{row}))'
+        # BUG TROUVE 2026-09-08 (retour pole transport) : zone_brute retombait sur C{row} dans
+        # le dernier ELSE, en supposant C{row} deja equivalent a "refaire le lookup" -- FAUX
+        # quand le lookup de C echoue : C vaut alors "inconnu" (8 caracteres, cf. formula index
+        # 2 ci-dessous), qui passe la condition LEN>2 et ressort tel quel comme Zone au lieu de
+        # retenter la recherche. La vraie formule du classeur fait-main refait un XLOOKUP direct
+        # dans ce cas (=SI(NBCAR(C)>2;C;SI(L="FR";"France";RECHERCHEX(I,'zone colis poids
+        # assurance'!D:D,'zone colis poids assurance'!F:F)))) -- reproduite ICI a l'identique.
+        zone_brute = ('IF(LEN(C{row})>2,C{row},IF(L{row}="FR","France",'
+                       '_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!F:F)))')
         fret_expr = tcd_lookup(col_fret) if col_fret else '""'
         plus_value_expr = tcd_lookup(col_plus_value) if col_plus_value else '""'
         zone_calculee_sans_wv = (
