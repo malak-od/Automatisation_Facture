@@ -93,6 +93,24 @@ def coerce(v):
     return v
 
 
+# Colonnes CSV brut (indices COL, cf. plus bas) qui sont des IDENTIFIANTS/CODES, jamais des
+# montants -- BUG TROUVE 2026-09-08 : coerce() convertissait toute valeur numerique pure
+# ("12345", "15") en float, y compris Ref.1/Ref.2/Zone/Pays (identifiants, pas des quantites
+# a calculer), ce qui faisait apparaitre des decimales parasites (".0") une fois collees dans
+# Excel puis relues par les XLOOKUP de "Fichier import" -- constate sur le fichier reel de
+# juillet 2026. Ces colonnes gardent leur texte brut tel quel, jamais converties en nombre.
+COL_TEXTE_FORCE = {"ref1", "ref2", "zone", "pays"}
+
+
+def coerce_ligne(row, col_index_to_key):
+    """Comme [coerce(v) for v in row], sauf pour les colonnes listees dans
+    COL_TEXTE_FORCE (identifiees via col_index_to_key, {index 0-based -> nom logique})."""
+    return [
+        v if col_index_to_key.get(i) in COL_TEXTE_FORCE else coerce(v)
+        for i, v in enumerate(row)
+    ]
+
+
 def num(x):
     try:
         return float(str(x).replace(",", ".").strip())
@@ -107,6 +125,7 @@ COL = {
     "date_facture": 9 - 4 - 1,
     "numero_facture": 10 - 4 - 1,
     "ref1": 20 - 4 - 1,
+    "ref2": 21 - 4 - 1,
     "numero_suivi": 25 - 4 - 1,
     "nombre_colis": 23 - 4 - 1,
     "poids_facture": 33 - 4 - 1,
@@ -802,7 +821,8 @@ def main():
         print(f"{n_repli_pays_export} tracking(s) à Pays manquant complété(s) via l'export WMS 'expéditions_brut'.")
 
     ncol = max((len(r) for r in lignes_retenues), default=0)
-    data_brut = [[coerce(v) for v in (r + [None] * ncol)[:ncol]] for r in lignes_retenues]
+    col_index_to_key = {idx: key for key, idx in COL.items()}
+    data_brut = [coerce_ligne((r + [None] * ncol)[:ncol], col_index_to_key) for r in lignes_retenues]
 
     ep_map = load_brut_ep(brut_paths) if brut_paths else {}
     if not brut_paths:
@@ -1116,7 +1136,16 @@ def main():
             7: "=_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!U:U)",  # G Ref.2
             9: "=TCD!E{tcdrow}",  # I N° Tracking
             11: '=IF(B{row}="particulier","P",IF(X{row}="","E","P"))',  # K E/P
-            12: "=_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!CH:CH)",  # L Pays
+            # L Pays -- BUG TROUVE 2026-09-08 : un XLOOKUP simple prend la PREMIERE ligne du
+            # tracking dans 'Facture UPS', or un meme tracking a souvent plusieurs lignes
+            # (charges/surcharges) dont les premieres ont CH (Pays) vide et le vrai pays
+            # n'apparait que sur une ligne suivante (constate sur juillet 2026, ex. tracking
+            # 1Z79A7T06810360359 : 5 lignes, CH=['','','FR','FR','FR']) -> Pays sortait "0"/vide
+            # a tort. Cherche desormais la PREMIERE ligne du tracking dont CH n'est PAS vide
+            # (XLOOKUP sur le tableau (Y=I{row})*(CH<>""), cherche 1) ; si aucune n'est trouvee
+            # (vraiment aucun pays sur tout le tracking), repli sur le XLOOKUP simple d'origine.
+            12: ("=IFERROR(_xlfn.XLOOKUP(1,('Facture UPS'!Y:Y=I{row})*('Facture UPS'!CH:CH<>\"\"),"
+                 "'Facture UPS'!CH:CH),_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!CH:CH))"),
             13: formula_zone,  # M Zone (regles 1/2/4/5 CDC 2026-08-27, cf. ci-dessus)
             14: "=MAX(_xlfn.XLOOKUP(I{row},'zone colis poids assurance'!D:D,'zone colis poids assurance'!E:E),A{row})",  # N Nbr Colis
             15: '=IF(D{row}="UPS_COD",_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!J:J),_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!I:I))',  # O Poids
