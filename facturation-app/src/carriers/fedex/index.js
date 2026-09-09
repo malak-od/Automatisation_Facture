@@ -62,9 +62,20 @@ function normKey(s) {
     .toLowerCase().replace(/[.,]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+// BUG TROUVE 2026-09-09 (export d'aout 2026 recu en ANGLAIS, cf. commentaire de
+// readFedexCsv ci-dessous -- "meme prefixe... observe sur un export anglais d'un autre
+// mois") : colIndexByName cherchait un seul libelle FR, absent tel quel dans un export
+// EN -- les 63 colonnes correspondent 1:1 par position/sens entre les deux langues (verifie
+// sur les 2 exports reels, juin/juillet FR vs aout EN), donc chaque appel accepte
+// desormais aussi l'alias anglais (name peut etre une chaine ou un tableau d'alias).
 function colIndexByName(header, name) {
-  const target = normKey(name);
-  return header.findIndex((h) => normKey(h) === target);
+  const names = Array.isArray(name) ? name : [name];
+  for (const n of names) {
+    const target = normKey(n);
+    const idx = header.findIndex((h) => normKey(h) === target);
+    if (idx >= 0) return idx;
+  }
+  return -1;
 }
 
 /** Lit un CSV FedEx (export portail, en-tete FR, separateur virgule, encodage UTF-8 --
@@ -231,10 +242,10 @@ async function process(files) {
   }
 
   const header = brutes[0].header;
-  const iCompte = colIndexByName(header, 'Compte du payeur');
-  const iService = colIndexByName(header, 'Description du service');
-  const iDateEnvoi = colIndexByName(header, "Date d'envoi (mm/jj/aaaa)");
-  const iTracking = colIndexByName(header, "Numéro de suivi de l'envoi");
+  const iCompte = colIndexByName(header, ['Compte du payeur', 'Payer Account']);
+  const iService = colIndexByName(header, ['Description du service', 'Service Description']);
+  const iDateEnvoi = colIndexByName(header, ["Date d'envoi (mm/jj/aaaa)", 'Shipment Date (mm/dd/yyyy)']);
+  const iTracking = colIndexByName(header, ["Numéro de suivi de l'envoi", 'Shipment Tracking Number']);
   // BUG TROUVE 2026-08-19 (finaliseur Python, ecart Fret 52472,41EUR vs 45515,83EUR reel) :
   // les colonnes "... en USD" du CSV brut NE SONT PAS celles utilisees par le classeur reel
   // -- le vrai "Montant" (Shipment Detail!A=BK+BN) reference les colonnes EUR "Devise de
@@ -243,17 +254,17 @@ async function process(files) {
   // devise de facturation"). Reconfirme sur un cas reel (tracking 381547998902) : USD
   // 539.82-458.09=81.73 vs EUR (colonnes ci-dessous) 465.03-394.62=70.41 = valeur reelle du
   // classeur modele.
-  const iFret = colIndexByName(header, "Devise de facturation des frais de transport de l'envoi");
-  const iDivers = colIndexByName(header, "Devise de facturation des frais divers de l'envoi");
-  const iDroitsTaxes = colIndexByName(header, "Devise de facturation des droits de douane et taxes de l'envoi");
-  const iRemise = colIndexByName(header, "Devise de facturation de la remise de l'envoi");
-  const iColis = colIndexByName(header, "Colis dans l'envoi");
-  const iPoids = colIndexByName(header, "Poids nominal de l'envoi (livres)");
-  const iPaysDest = colIndexByName(header, 'Pays/Territoire du destinataire');
-  const iLongueur = colIndexByName(header, 'Longueur volumétrique (cm)');
-  const iInvoiceNum = colIndexByName(header, 'Numéro de facture');
-  const iInvoiceDate = colIndexByName(header, 'Date de facturation (mm/jj/aaaa)');
-  const iMoisFacturation = colIndexByName(header, 'Mois de facturation (aaaamm)');
+  const iFret = colIndexByName(header, ["Devise de facturation des frais de transport de l'envoi", 'Shipment Freight Charge Billed Currency']);
+  const iDivers = colIndexByName(header, ["Devise de facturation des frais divers de l'envoi", 'Shipment Miscellaneous Charge Billed Currency']);
+  const iDroitsTaxes = colIndexByName(header, ["Devise de facturation des droits de douane et taxes de l'envoi", 'Shipment Duty And Tax Charge Billed Currency']);
+  const iRemise = colIndexByName(header, ["Devise de facturation de la remise de l'envoi", 'Shipment Discount Billed Currency']);
+  const iColis = colIndexByName(header, ["Colis dans l'envoi", 'Pieces In Shipment']);
+  const iPoids = colIndexByName(header, ["Poids nominal de l'envoi (livres)", 'Shipment Rated Weight (Pounds)']);
+  const iPaysDest = colIndexByName(header, ['Pays/Territoire du destinataire', 'Recipient Country/Territory']);
+  const iLongueur = colIndexByName(header, ['Longueur volumétrique (cm)', 'Dimmed Length (cm)']);
+  const iInvoiceNum = colIndexByName(header, ['Numéro de facture', 'Invoice Number']);
+  const iInvoiceDate = colIndexByName(header, ['Date de facturation (mm/jj/aaaa)', 'Invoice Date (mm/dd/yyyy)']);
+  const iMoisFacturation = colIndexByName(header, ['Mois de facturation (aaaamm)', 'Invoice Month (yyyymm)']);
 
   const requis = { iTracking, iFret, iRemise, iInvoiceNum, iPaysDest };
   const manquantes = Object.entries(requis).filter(([, v]) => v < 0).map(([k]) => k);
