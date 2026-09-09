@@ -804,6 +804,26 @@ def main():
         purgeUntil = maxLast + 200
         retry(lambda: ws.Range(ws.Cells(2, 1), ws.Cells(purgeUntil, max(LAST_RAW_COL, LAST_CALC_COL))).ClearContents())
 
+        # BUG TROUVE 2026-09-09 (retour pole transport : "les feuilles s'arretent a la derniere
+        # ligne") : le modele fait-main lui-meme (2026_06_Facture UPS.xlsx) a une VALEUR
+        # NUMERIQUE FIGEE identique (46024 = 02/01/2026) recopiee sur les colonnes E/I de la
+        # ligne 19812 jusqu'a 32422 -- pas une formule, pas juste du formatage : une vraie
+        # donnee residuelle. Consequence : oldLast (calcule via End(xlUp)) remonte jusqu'a
+        # 32422 au lieu de s'arreter aux vraies donnees, ce qui rend purgeUntil (base sur
+        # oldLast) tout aussi faux d'un mois sur l'autre -- ClearContents() ci-dessus efface le
+        # CONTENU de ce residu (il est dans la plage 2..purgeUntil) mais jamais le FORMATAGE, et
+        # meme apres ClearContents() le UsedRange ne se reduit PAS dans la meme session Excel
+        # (teste et confirme -- COM garde le UsedRange "historique" jusqu'a une vraie suppression
+        # de lignes). Fix : EntireRow.Delete() sur tout ce qui suit newLast (PAS oldLast/
+        # purgeUntil, faux ici a cause du residu) force le recalcul immediat du UsedRange --
+        # plus lent (~3 min sur 8877 lignes/aout 2026, mesure reel) mais seule methode qui
+        # fonctionne ; accepte (decision pole transport 2026-09-09, la propreté du classeur
+        # prime sur la duree de generation).
+        deleteFrom = newLast + 1
+        deleteTo = oldLast  # borne haute reelle du residu (End(xlUp) ne va jamais plus loin)
+        if deleteFrom <= deleteTo:
+            retry(lambda: ws.Range(ws.Cells(deleteFrom, 1), ws.Cells(deleteTo, 1)).EntireRow.Delete())
+
         # "Numero de suivi" est TOUJOURS numerique/alphanumerique sans zero de tete dans le
         # brut reel UPS -- pas de force NumberFormat texte necessaire (contrairement a TNT).
         retry(lambda: ws.Range(ws.Cells(2, FIRST_RAW_COL), ws.Cells(newLast, LAST_RAW_COL)).__setattr__("Value", data_brut))
