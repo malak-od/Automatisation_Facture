@@ -1358,17 +1358,26 @@ def main():
                 if n_fantomes:
                     print(f"'Fichier import' : {n_fantomes} ligne(s) fantome(s) (tracking absent des donnees sources, artefact COM transitoire) exclue(s) de l'export final.")
                 n_err = 0
-                def clean(v):
+                # Index 0-based DANS cette plage D->X (D=0) : Ref.1=2, Ref.2=3 -- BUG TROUVE
+                # 2026-09-09 (demande pole transport) : ces colonnes sont des references texte
+                # (id client, bon de commande...) jamais des quantites, or elles ressortaient
+                # parfois "0.0" (colonne vide cote source, lue comme nombre par Excel/COM) --
+                # l'ERP rejette l'import si le fichier contient un "0" dans Ref.1/Ref.2. Ces deux
+                # colonnes sont donc videes explicitement quand leur valeur est 0/0.0.
+                IDX_REF1_VALUES, IDX_REF2_VALUES = 2, 3
+                def clean(v, col_idx=None):
                     nonlocal n_err
                     if isinstance(v, int) and not isinstance(v, bool) and v < -1000000:
                         n_err += 1
+                        return ""
+                    if col_idx in (IDX_REF1_VALUES, IDX_REF2_VALUES) and v in (0, 0.0, "0", "0.0"):
                         return ""
                     return "" if v is None else v
                 export_path = os.path.splitext(sortie)[0] + "_import_valeurs.csv"
                 with open(export_path, "w", encoding="utf-8-sig", newline="") as f:
                     w = csv.writer(f, delimiter=";")
                     for row in values:
-                        w.writerow([clean(v) for v in row])
+                        w.writerow([clean(v, i) for i, v in enumerate(row)])
                 if n_err:
                     print(f"AVERTISSEMENT: {n_err} cellule(s) en erreur COM lors de l'export Fichier import (valeurs) -- laissees vides, a verifier.")
                 print(f"EXPORT_IMPORT_VALEURS:{export_path}")
