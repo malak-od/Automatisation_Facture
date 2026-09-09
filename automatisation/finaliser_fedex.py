@@ -65,10 +65,16 @@ def compare_key(h):
 
 
 def col_index(header, name):
-    target = compare_key(name)
-    for i, h in enumerate(header):
-        if compare_key(h) == target:
-            return i
+    """name : une chaine, ou une liste d'alias (ex. [libelle_FR, libelle_EN]) -- BUG
+    TROUVE 2026-09-09 (meme piege que carriers/fedex/index.js cote Node) : un export
+    FedEx en ANGLAIS n'a aucune colonne au libelle FR attendu, ce qui rendait i_tracking/
+    i_invoice_date/etc. = None (plantage plus loin, ex. r[None])."""
+    names = name if isinstance(name, (list, tuple)) else [name]
+    for n in names:
+        target = compare_key(n)
+        for i, h in enumerate(header):
+            if compare_key(h) == target:
+                return i
     return None
 
 
@@ -280,8 +286,8 @@ def main():
     n = len(rows)
     print(f"Entrée : {n} lignes x {len(header)} colonnes")
 
-    i_tracking = col_index(header, "Numéro de suivi de l'envoi")
-    i_service = col_index(header, "Description du service")
+    i_tracking = col_index(header, ["Numéro de suivi de l'envoi", "Shipment Tracking Number"])
+    i_service = col_index(header, ["Description du service", "Service Description"])
     # BUG TROUVE 2026-08-19 : les colonnes "... en USD" du CSV brut NE SONT PAS celles
     # utilisees par le classeur reel -- le vrai "Montant" (Shipment Detail!A=BK+BN) reference
     # les colonnes EUR "Devise de facturation des frais de transport/de la remise" (noms
@@ -289,12 +295,12 @@ def main():
     # la colonne suivante "Code de la devise de facturation"). Reconfirme sur un cas reel
     # (tracking 381547998902) : USD 539.82-458.09=81.73 vs EUR 465.03-394.62=70.41 = valeur
     # reelle du classeur modele. Meme correction que index.js (carrier Node).
-    i_fret = col_index(header, "Devise de facturation des frais de transport de l'envoi")
-    i_remise = col_index(header, "Devise de facturation de la remise de l'envoi")
-    i_taxe = col_index(header, "Devise de facturation des droits de douane et taxes de l'envoi")
-    i_invoice_num = col_index(header, "Numéro de facture")
-    i_mois = col_index(header, "Mois de facturation (aaaamm)")
-    i_invoice_date = col_index(header, "Date de facturation (mm/jj/aaaa)")
+    i_fret = col_index(header, ["Devise de facturation des frais de transport de l'envoi", "Shipment Freight Charge Billed Currency"])
+    i_remise = col_index(header, ["Devise de facturation de la remise de l'envoi", "Shipment Discount Billed Currency"])
+    i_taxe = col_index(header, ["Devise de facturation des droits de douane et taxes de l'envoi", "Shipment Duty And Tax Charge Billed Currency"])
+    i_invoice_num = col_index(header, ["Numéro de facture", "Invoice Number"])
+    i_mois = col_index(header, ["Mois de facturation (aaaamm)", "Invoice Month (yyyymm)"])
+    i_invoice_date = col_index(header, ["Date de facturation (mm/jj/aaaa)", "Invoice Date (mm/dd/yyyy)"])
 
     # Controle "bordereau facture par FedEx mais absent du CSV" (2026-08-20, cas reel juillet :
     # facture 634393398, ecart 83,81EUR -- un envoi de NOVEMBRE 2025 apparaissait dans le PDF
