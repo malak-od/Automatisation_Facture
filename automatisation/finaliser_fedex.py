@@ -117,10 +117,18 @@ X_BRUT_TRACK, X_BRUT_DES_PARTICULIER = 41, 16  # PRO_TRACKING (AP) / DES_PARTICU
 def load_brut_ep(brut_paths):
     """Map {tracking (str) -> 'entreprise'/'particulier'}. Ordre des fichiers = priorite
     (mois courant, puis M-1) -- la PREMIERE occurrence gagne, meme regle que Delivengo."""
+    import io
     import openpyxl
     m = {}
     for p in [bp for bp in brut_paths if bp]:
-        wb = openpyxl.load_workbook(p, read_only=True)
+        # BUG TROUVE 2026-09-09 : openpyxl refuse un chemin SANS EXTENSION (InvalidFileException
+        # "openpyxl does not support  file format") -- les fichiers uploades via multer sont
+        # renommes en identifiant hexadecimal sans extension (meme piege deja corrige sur
+        # BLS/UPS). Fix : ouvrir en binaire et passer un buffer memoire (openpyxl accepte un
+        # objet fichier-like, detecte le format par SIGNATURE ZIP interne, pas par le nom).
+        with open(p, "rb") as f:
+            buf = io.BytesIO(f.read())
+        wb = openpyxl.load_workbook(buf, read_only=True)
         ws = wb[wb.sheetnames[0]]
         for row in ws.iter_rows(min_row=2, values_only=True):
             if len(row) > X_BRUT_TRACK:
