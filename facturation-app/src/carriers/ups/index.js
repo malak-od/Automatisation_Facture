@@ -588,9 +588,13 @@ function computeFinalizerArgs(files, period, _appRoot, fileNames) {
   // s'appliquait jamais au fichier reellement livre, car UPS utilise importFromWorkbook=true
   // (le CSV final vient du classeur Excel genere par ce meme finaliseur, pas du calcul JS).
   const brutSorted = sortBrutPathsByMonthDesc(files.brut || [], fileNames && fileNames.brut);
+  // Repli Zone M-1 reintroduit 2026-09-09 (demande pole transport) -- ecrit une VALEUR
+  // par-dessus Zone=0/vide dans "Fichier import", ne touche jamais la formule Excel.
+  const importM1 = (files.importM1 || [])[0];
   return [
     '--csv', ...(files.csv || []),
     '--brut', ...brutSorted,
+    ...(importM1 ? ['--import-m1', importM1] : []),
     ...(period ? ['--period', period] : []),
   ];
 }
@@ -605,6 +609,7 @@ module.exports = {
   inputs: [
     { key: 'csv', label: 'Factures UPS Billing (CSV, 1 par facture)', accept: '.csv', multiple: true, required: true },
     { key: 'brut', label: 'Export des expéditions brutes (mois courant + M-1 + M-2 si dispo, dans cet ordre)', accept: '.xlsx,.xls', multiple: true, required: true },
+    { key: 'importM1', label: 'Fichier import CSV du mois précédent (repli Zone quand Zone=0/vide)', accept: '.csv', multiple: false, required: false },
   ],
   outputNaming: { workbook: '{period}_Facture UPS', import: '{period}_UPS_Import' },
   // Le fichier import CSV/XLSX est reconstruit depuis les valeurs REELLEMENT calculees par

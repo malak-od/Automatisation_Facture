@@ -239,25 +239,68 @@ def colis_volumineux_montant(montant_reel):
 
 
 def parse_args(argv):
-    """--csv <csv...> [--brut <xlsx...>] [--period AAAA_MM]"""
+    """--csv <csv...> [--brut <xlsx...>] [--import-m1 <csv>] [--period AAAA_MM]"""
     modele, sortie = argv[1], argv[2]
     csvs, brut, cur = [], [], None
     period = None
+    import_m1 = None
     for a in argv[3:]:
         if a == "--csv":
             cur = "c"
         elif a == "--brut":
             cur = "b"
+        elif a == "--import-m1":
+            cur = "m1"
         elif a == "--period":
             cur = "p"
         elif cur == "c":
             csvs.append(a)
         elif cur == "b":
             brut.append(a)
+        elif cur == "m1":
+            import_m1 = a
+            cur = None
         elif cur == "p":
             period = a
             cur = None
-    return modele, sortie, csvs, brut, period
+    return modele, sortie, csvs, brut, period, import_m1
+
+
+def load_import_m1(path):
+    """Map {tracking -> zone} depuis le fichier import CSV FINAL du mois precedent (deja
+    livre a l'ERP -- format ecrit par writeImportCsv() cote Node : latin1, ';', decimale
+    virgule) -- meme mecanisme que le repli 'zone colis poids assurance' vu dans la video
+    process (RECHERCHEX vers 2025_04_UPS_Import.csv). Repli de dernier recours pour
+    Zone=0/vide, EN VALEUR uniquement (ne touche jamais a la formule Excel de la colonne
+    Zone) -- reintroduit 2026-09-09 sur demande pole transport (retire le 2026-09-08 en
+    meme temps que les autres regles CDC du 27/08, mais ce repli M-1 specifique doit
+    rester : c'est la vraie methode manuelle de reference, confirmee dans la video)."""
+    if not path:
+        return {}
+    m = {}
+    try:
+        with open(path, encoding="latin-1", newline="") as f:
+            rows = list(csv.reader(f, delimiter=";"))
+    except Exception as e:
+        print(f"AVERTISSEMENT: fichier import M-1 illisible ({e}) -- repli Zone (mois precedent) desactive.")
+        return {}
+    if not rows:
+        return {}
+    header = [normalize_header(h) for h in rows[0]]
+    try:
+        i_tracking = header.index("N° Tracking")
+        i_zone = header.index("Zone")
+    except ValueError:
+        print("AVERTISSEMENT: en-tetes 'N° Tracking'/'Zone' introuvables dans le fichier import M-1 -- repli desactive.")
+        return {}
+    for r in rows[1:]:
+        if len(r) <= max(i_tracking, i_zone):
+            continue
+        t = str(r[i_tracking] or "").strip()
+        zone = str(r[i_zone] or "").strip()
+        if t and zone and t not in m:
+            m[t] = zone
+    return m
 
 
 def load_brut_ep(brut_paths):
@@ -508,7 +551,7 @@ def load_dotenv_ups():
 
 def main():
     load_dotenv_ups()
-    modele, sortie, csv_paths, brut_paths, period = parse_args(sys.argv)
+    modele, sortie, csv_paths, brut_paths, period, import_m1_path = parse_args(sys.argv)
     if not csv_paths:
         raise RuntimeError("Aucun CSV fourni (--csv <facture1.csv> [...]).")
     shutil.copyfile(modele, sortie)  # on ne touche JAMAIS au modele
@@ -522,6 +565,16 @@ def main():
     if not all_rows:
         raise RuntimeError("Fichier(s) UPS vide(s) ou illisible(s).")
     print(f"Entrée : {len(all_rows)} ligne(s) brute(s), {len(csv_paths)} fichier(s).")
+
+    # Repli Zone (dernier recours, EN VALEUR uniquement -- ne touche jamais a la formule
+    # Excel) : zone=0/vide -> chercher le tracking dans le fichier import CSV du mois
+    # precedent (deja livre a l'ERP). Charge tot avec les autres sources externes ;
+    # consomme plus loin, apres le calcul Excel de "Fichier import".
+    zone_m1_map = load_import_m1(import_m1_path)
+    if zone_m1_map:
+        print(f"Fichier import du mois précédent : {len(zone_m1_map)} tracking(s)/zone(s) chargé(s) (repli Zone=0/vide).")
+    elif import_m1_path:
+        print("AVERTISSEMENT: fichier import M-1 fourni mais aucune zone exploitable n'en a été extraite.")
 
     # Mois cible = choix utilisateur (--period, source de verite, decision 2026-08-20 --
     # BUG TROUVE 2026-08-26 : --period n'etait jamais transmis au finaliseur, "Date validite
@@ -1235,12 +1288,19 @@ def main():
             print(f"'Fichier import' : {wsImpUsedLastRow - newLastImp} ligne(s) residuelle(s) (mise en forme sans donnees) supprimee(s) au-dela de la ligne {newLastImp}.")
         xl.Calculate()
 
-        # CDC pole transport 2026-08-27 : repli Zone M-1 (regle 3) + validations console
+        # Repli Zone M-1 (dernier recours, EN VALEUR uniquement) + validations console
         # (TVA hors UE, point B ; SV/ST, regles 6/7) -- APRES la suppression des lignes vides
         # et residuelles ci-dessus (numeros de ligne definitifs, plus aucun decalage a venir),
         # AVANT le Save()/Close() plus bas. Une seule lecture COM groupee (colonnes I->Q) pour
         # limiter les allers-retours sur potentiellement 6000-8700 lignes (meme principe deja
         # applique ligne ~1059, "lecture en BLOC").
+        # REINTRODUIT 2026-09-09 (demande pole transport) : ce repli avait ete retire le
+        # 2026-09-08 avec le reste des regles CDC 2026-08-27 (fret->France, "A VERIFIER",
+        # Verde Trad) -- mais lui doit rester, c'est la vraie methode manuelle de reference
+        # (comparer au fichier import du mois precedent pour les zones ambigues, confirme
+        # dans la video process UPS_2). Ne touche JAMAIS la formule Excel de la colonne Zone
+        # (formula_zone reste la formule simple ci-dessus) -- ecrit uniquement une VALEUR
+        # figee par-dessus, seulement quand Zone est encore 0/vide apres calcul.
         if newLastImp >= 2:
             rangeZoneVal = wsImp.Range(wsImp.Cells(2, 9), wsImp.Cells(newLastImp, 17))  # I..Q
             valuesZoneVal = rangeZoneVal.Value
@@ -1250,9 +1310,21 @@ def main():
             # N=5,O=6,P(Mode envoi)=7,Q(TVA)=8.
             IDX_TRACKING, IDX_PAYS, IDX_ZONE, IDX_MODE, IDX_TVA = 0, 3, 4, 7, 8
 
-            # (Repli Zone M-1 abandonne le 2026-09-08 avec le reste des regles CDC
-            # 2026-08-27 -- Zone reste telle que calculee par la formule Excel, sans
-            # repli automatique sur un ancien fichier import.)
+            corrections_m1 = []  # (index 0-based dans valuesZoneVal, zone)
+            for i, row in enumerate(valuesZoneVal):
+                zone_v = row[IDX_ZONE]
+                if zone_v in (0, "0", "", None):
+                    t = str(row[IDX_TRACKING] or "").strip()
+                    zone_m1 = zone_m1_map.get(t)
+                    if zone_m1:
+                        corrections_m1.append((i, zone_m1))
+            if corrections_m1:
+                for i, zone_m1 in corrections_m1:
+                    r = i + 2
+                    wsImp.Cells(r, 13).Value = zone_m1  # M Zone, EN VALEUR (donnee externe)
+                print(f"'Fichier import' : {len(corrections_m1)} tracking(s) à Zone=0/vide complété(s) via le fichier import du mois précédent.")
+                xl.Calculate()
+                valuesZoneVal = rangeZoneVal.Value  # relecture : les validations ci-dessous doivent voir les zones corrigees
 
             # Validation TVA=0 hors UE (point B) -- ALERTE CONSOLE UNIQUEMENT, aucune ecriture.
             suspects_tva = []
