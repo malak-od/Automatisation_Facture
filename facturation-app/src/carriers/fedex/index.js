@@ -289,8 +289,15 @@ async function process(files) {
     const manquants = (p.bordereaux || []).filter((b) => !csvTrackings.has(b.tracking));
     if (manquants.length) {
       const totalManquant = round2(manquants.reduce((s, b) => s + (b.sousTotal || 0), 0));
-      const detail = manquants.map((b) => `${b.tracking} (envoi du ${b.dateEnvoi}, ${b.sousTotal.toFixed(2)} EUR)`).join(', ');
-      warnings.push(`PDF ${p.file}${p.numeroFacture ? ` (n° ${p.numeroFacture})` : ''} : ${manquants.length} bordereau(x) facturé(s) par FedEx mais absent(s) du CSV Shipment Detail — ${detail} — total HT manquant ≈ ${totalManquant.toFixed(2)} EUR (probable envoi d'un mois antérieur jamais reporté, à vérifier avec le pôle transport).`);
+      // BUG TROUVE 2026-09-09 (remontee pole transport, "pas clair a l'ecran") : le detail
+      // listait TOUS les trackings manquants sans limite (jusqu'a 417 sur un cas reel) --
+      // illisible dans l'UI (un seul <div>, cf. public/index.html). Echantillon des 20
+      // premiers + total (nombre/montant deja donnes en tete de phrase, jamais perdus) --
+      // meme principe que l'echantillonnage deja utilise cote Python (finaliser_ups.py,
+      // "echantillon = ...[:20]").
+      const echantillon = manquants.slice(0, 20).map((b) => `${b.tracking} (envoi du ${b.dateEnvoi}, ${b.sousTotal.toFixed(2)} EUR)`).join(', ');
+      const suite = manquants.length > 20 ? ` … et ${manquants.length - 20} autre(s)` : '';
+      warnings.push(`PDF ${p.file}${p.numeroFacture ? ` (n° ${p.numeroFacture})` : ''} : ${manquants.length} bordereau(x) facturé(s) par FedEx mais absent(s) du CSV Shipment Detail — ${echantillon}${suite} — total HT manquant ≈ ${totalManquant.toFixed(2)} EUR (probable envoi d'un mois antérieur jamais reporté, à vérifier avec le pôle transport).`);
     }
   }
 
