@@ -38,23 +38,21 @@ Classeur reel :
       humaine post-generation).
     - "Fichier import" : formules PAR LIGNE completes (cf. carrier Node
       index.js pour le detail complet des 24 colonnes, notamment
-      Transporteur=compte extrait du tracking via 'Comptes UPS', Zone=
-      FOURNIE par UPS (native XLOOKUP) SAUF regles CDC 2026-08-27
-      ci-dessous, E/P=cascade ERP/plus-value BtoC, TVA=IF(TCD!N="",0,0.2)
-      (poste TVA reel, PAS liste de pays -- deja naturellement 0 hors UE,
-      valide a posteriori en Python, jamais recalcule), Colis
-      volumineux=bareme par palier sur TCD!H (poste ERP MONTANT, PAS le
-      poids -- piege deja documente).
-      Regles Zone (CDC pole transport 2026-08-27, colonne M) : 1) Zone=0
-      interdite (garantie une fois le repli M-1 applique) ; 2) Zone=0 +
-      Fret 3-8EUR + Pays vide/FR -> "France" ; 3) Zone=0 sans fret ->
-      repli Python sur le fichier import CSV du mois precedent
-      (load_import_m1, champ upload dedie --import-m1) ; 4) plus-value
-      BtoC<2EUR + Zone="France" (hors WV5788) -> marqueur "A VERIFIER" ;
-      5) compte WV5788 (Verde Trad) -> Zone="France" + Mode envoi="ST"
-      forces (override absolu, colonnes M et P). Regles 6/7 (validation
-      croisee zoning UPS Pays->SV/ST, table PAYS_SV_ST) : alerte console
-      uniquement, ne modifie jamais Zone/Mode envoi.
+      Transporteur=compte extrait du tracking via 'Comptes UPS', Zone
+      (colonne M)=SI(NBCAR(C)>2;C;SI(L="FR";"France";RECHERCHEX(I,'zone
+      colis poids assurance'!D:D,'zone colis poids assurance'!F:F))),
+      identique au classeur fait-main (formule simple -- les regles CDC
+      pole transport du 2026-08-27, plus complexes -- fret 3-8EUR->
+      France, repli sur le fichier import du mois precedent, marqueur
+      "A VERIFIER", override Verde Trad/WV5788 -- ont ete ABANDONNEES le
+      2026-09-08, retour a cette formule d'origine), E/P=cascade ERP/
+      plus-value BtoC, TVA=IF(TCD!N="",0,0.2) (poste TVA reel, PAS liste
+      de pays -- deja naturellement 0 hors UE, valide a posteriori en
+      Python, jamais recalcule), Colis volumineux=bareme par palier sur
+      TCD!H (poste ERP MONTANT, PAS le poids -- piege deja documente).
+      Validation croisee SV/ST (zoning UPS Pays->SV/ST, table
+      PAYS_SV_ST) : alerte console uniquement, ne modifie jamais Zone/
+      Mode envoi.
 
 Colis 1Z79 (regle FACTURATION EXCEL.docx) : colis viticulteur retourne
   chez La Ruche -- EXCLUS de Facture UPS (jamais colles), a signaler pour
@@ -93,6 +91,24 @@ def coerce(v):
     return v
 
 
+# Colonnes CSV brut (indices COL, cf. plus bas) qui sont des IDENTIFIANTS/CODES, jamais des
+# montants -- BUG TROUVE 2026-09-08 : coerce() convertissait toute valeur numerique pure
+# ("12345", "15") en float, y compris Ref.1/Ref.2/Zone/Pays (identifiants, pas des quantites
+# a calculer), ce qui faisait apparaitre des decimales parasites (".0") une fois collees dans
+# Excel puis relues par les XLOOKUP de "Fichier import" -- constate sur le fichier reel de
+# juillet 2026. Ces colonnes gardent leur texte brut tel quel, jamais converties en nombre.
+COL_TEXTE_FORCE = {"ref1", "ref2", "zone", "pays"}
+
+
+def coerce_ligne(row, col_index_to_key):
+    """Comme [coerce(v) for v in row], sauf pour les colonnes listees dans
+    COL_TEXTE_FORCE (identifiees via col_index_to_key, {index 0-based -> nom logique})."""
+    return [
+        v if col_index_to_key.get(i) in COL_TEXTE_FORCE else coerce(v)
+        for i, v in enumerate(row)
+    ]
+
+
 def num(x):
     try:
         return float(str(x).replace(",", ".").strip())
@@ -107,6 +123,7 @@ COL = {
     "date_facture": 9 - 4 - 1,
     "numero_facture": 10 - 4 - 1,
     "ref1": 20 - 4 - 1,
+    "ref2": 21 - 4 - 1,
     "numero_suivi": 25 - 4 - 1,
     "nombre_colis": 23 - 4 - 1,
     "poids_facture": 33 - 4 - 1,
@@ -222,31 +239,25 @@ def colis_volumineux_montant(montant_reel):
 
 
 def parse_args(argv):
-    """--csv <csv...> [--brut <xlsx...>] [--import-m1 <csv>] [--period AAAA_MM]"""
+    """--csv <csv...> [--brut <xlsx...>] [--period AAAA_MM]"""
     modele, sortie = argv[1], argv[2]
     csvs, brut, cur = [], [], None
     period = None
-    import_m1 = None
     for a in argv[3:]:
         if a == "--csv":
             cur = "c"
         elif a == "--brut":
             cur = "b"
-        elif a == "--import-m1":
-            cur = "m1"
         elif a == "--period":
             cur = "p"
         elif cur == "c":
             csvs.append(a)
         elif cur == "b":
             brut.append(a)
-        elif cur == "m1":
-            import_m1 = a
-            cur = None
         elif cur == "p":
             period = a
             cur = None
-    return modele, sortie, csvs, brut, period, import_m1
+    return modele, sortie, csvs, brut, period
 
 
 def load_brut_ep(brut_paths):
@@ -309,40 +320,6 @@ def load_brut_poids_colis_pays(brut_paths):
                     m_pays[t] = pays
         wb.close()
     return m_poids, m_colis, m_pays
-
-
-def load_import_m1(path):
-    """Map {tracking -> zone} depuis le fichier import CSV FINAL du mois precedent (deja
-    livre a l'ERP -- format ecrit par writeImportCsv() cote Node : latin1, ';', decimale
-    virgule) -- meme mecanisme que le repli 'zone colis poids assurance' vu dans la video
-    process (RECHERCHEX vers 2026_04_UPS_Import.csv). Repli de dernier recours pour Zone=0
-    SANS fret (demande utilisateur 2026-08-27)."""
-    if not path:
-        return {}
-    m = {}
-    try:
-        with open(path, encoding="latin-1", newline="") as f:
-            rows = list(csv.reader(f, delimiter=";"))
-    except Exception as e:
-        print(f"AVERTISSEMENT: fichier import M-1 illisible ({e}) -- repli Zone (mois precedent) desactive.")
-        return {}
-    if not rows:
-        return {}
-    header = [normalize_header(h) for h in rows[0]]
-    try:
-        i_tracking = header.index("N° Tracking")
-        i_zone = header.index("Zone")
-    except ValueError:
-        print("AVERTISSEMENT: en-tetes 'N° Tracking'/'Zone' introuvables dans le fichier import M-1 -- repli desactive.")
-        return {}
-    for r in rows[1:]:
-        if len(r) <= max(i_tracking, i_zone):
-            continue
-        t = str(r[i_tracking] or "").strip()
-        zone = str(r[i_zone] or "").strip()
-        if t and zone and t not in m:
-            m[t] = zone
-    return m
 
 
 def poids_audite_de_ligne(r):
@@ -531,7 +508,7 @@ def load_dotenv_ups():
 
 def main():
     load_dotenv_ups()
-    modele, sortie, csv_paths, brut_paths, period, import_m1_path = parse_args(sys.argv)
+    modele, sortie, csv_paths, brut_paths, period = parse_args(sys.argv)
     if not csv_paths:
         raise RuntimeError("Aucun CSV fourni (--csv <facture1.csv> [...]).")
     shutil.copyfile(modele, sortie)  # on ne touche JAMAIS au modele
@@ -545,15 +522,6 @@ def main():
     if not all_rows:
         raise RuntimeError("Fichier(s) UPS vide(s) ou illisible(s).")
     print(f"Entrée : {len(all_rows)} ligne(s) brute(s), {len(csv_paths)} fichier(s).")
-
-    # Repli Zone (regle 3, CDC 2026-08-27) : zone=0 SANS fret -> chercher le tracking dans le
-    # fichier import CSV du mois precedent (deja livre a l'ERP). Charge tot avec les autres
-    # sources externes ; consomme plus loin, apres le calcul Excel de "Fichier import".
-    zone_m1_map = load_import_m1(import_m1_path)
-    if zone_m1_map:
-        print(f"Fichier import du mois précédent : {len(zone_m1_map)} tracking(s)/zone(s) chargé(s) (repli Zone=0 sans frêt).")
-    elif import_m1_path:
-        print("AVERTISSEMENT: fichier import M-1 fourni mais aucune zone exploitable n'en a été extraite.")
 
     # Mois cible = choix utilisateur (--period, source de verite, decision 2026-08-20 --
     # BUG TROUVE 2026-08-26 : --period n'etait jamais transmis au finaliseur, "Date validite
@@ -802,7 +770,8 @@ def main():
         print(f"{n_repli_pays_export} tracking(s) à Pays manquant complété(s) via l'export WMS 'expéditions_brut'.")
 
     ncol = max((len(r) for r in lignes_retenues), default=0)
-    data_brut = [[coerce(v) for v in (r + [None] * ncol)[:ncol]] for r in lignes_retenues]
+    col_index_to_key = {idx: key for key, idx in COL.items()}
+    data_brut = [coerce_ligne((r + [None] * ncol)[:ncol], col_index_to_key) for r in lignes_retenues]
 
     ep_map = load_brut_ep(brut_paths) if brut_paths else {}
     if not brut_paths:
@@ -834,6 +803,26 @@ def main():
         maxLast = max(oldLast, newLast, 2)
         purgeUntil = maxLast + 200
         retry(lambda: ws.Range(ws.Cells(2, 1), ws.Cells(purgeUntil, max(LAST_RAW_COL, LAST_CALC_COL))).ClearContents())
+
+        # BUG TROUVE 2026-09-09 (retour pole transport : "les feuilles s'arretent a la derniere
+        # ligne") : le modele fait-main lui-meme (2026_06_Facture UPS.xlsx) a une VALEUR
+        # NUMERIQUE FIGEE identique (46024 = 02/01/2026) recopiee sur les colonnes E/I de la
+        # ligne 19812 jusqu'a 32422 -- pas une formule, pas juste du formatage : une vraie
+        # donnee residuelle. Consequence : oldLast (calcule via End(xlUp)) remonte jusqu'a
+        # 32422 au lieu de s'arreter aux vraies donnees, ce qui rend purgeUntil (base sur
+        # oldLast) tout aussi faux d'un mois sur l'autre -- ClearContents() ci-dessus efface le
+        # CONTENU de ce residu (il est dans la plage 2..purgeUntil) mais jamais le FORMATAGE, et
+        # meme apres ClearContents() le UsedRange ne se reduit PAS dans la meme session Excel
+        # (teste et confirme -- COM garde le UsedRange "historique" jusqu'a une vraie suppression
+        # de lignes). Fix : EntireRow.Delete() sur tout ce qui suit newLast (PAS oldLast/
+        # purgeUntil, faux ici a cause du residu) force le recalcul immediat du UsedRange --
+        # plus lent (~3 min sur 8877 lignes/aout 2026, mesure reel) mais seule methode qui
+        # fonctionne ; accepte (decision pole transport 2026-09-09, la propreté du classeur
+        # prime sur la duree de generation).
+        deleteFrom = newLast + 1
+        deleteTo = oldLast  # borne haute reelle du residu (End(xlUp) ne va jamais plus loin)
+        if deleteFrom <= deleteTo:
+            retry(lambda: ws.Range(ws.Cells(deleteFrom, 1), ws.Cells(deleteTo, 1)).EntireRow.Delete())
 
         # "Numero de suivi" est TOUJOURS numerique/alphanumerique sans zero de tete dans le
         # brut reel UPS -- pas de force NumberFormat texte necessaire (contrairement a TNT).
@@ -1049,47 +1038,20 @@ def main():
         # assurance"/"Facture UPS" deja en XLOOKUP par tracking, jamais par position. Une
         # formule qui cherche par tracking reste valide meme apres suppression de lignes ->
         # permet de GARDER des formules vivantes dans "Fichier import" (fidele au fait-main)
-        # au lieu de figer en valeurs. Definie ICI (avant formulas_import) car la formule Zone
-        # (regles 2/4, CDC 2026-08-27) a aussi besoin de tcd_lookup(col_fret)/(col_plus_value).
+        # au lieu de figer en valeurs. Utilise ci-dessous pour Fret/plus-value BtoC (colonnes
+        # W/X) et d'autres postes TCD.
         def tcd_lookup(col):
             return f"_xlfn.XLOOKUP(I{{row}},TCD!E:E,TCD!{col}:{col})"
 
-        # CDC pole transport 2026-08-27 -- regles Zone (priorite dans cet ordre) :
-        #   5) compte WV5788 (Verde Trad, colonne D deja resolue en "Verde Trad") -> Zone=
-        #      "France" FORCE (override absolu, prioritaire a tout le reste) + Mode envoi="ST"
-        #      force (cf. formulas_import[16] plus bas).
-        #   2) Zone brute=0/vide + Fret entre 3 et 8EUR (fourchette large validee, "fret ~5EUR")
-        #      + Pays vide ou FR -> Zone="France".
-        #   3) Zone brute=0/vide + PAS de fret -> laisser 0 ICI ; corrige ensuite en PYTHON via
-        #      le fichier import du mois precedent (zone_m1_map, cf. bloc post-Calculate plus
-        #      bas) -- ne peut pas etre une formule Excel (donnee externe).
-        #   sinon : zone_brute (formule d'origine, inchangee).
-        #   4) (applique sur le RESULTAT ci-dessus, PAS avant) : plus-value BtoC<2EUR ET
-        #      Zone="France" ET pas WV5788 -> marqueur "A VERIFIER" (signale au lieu de modifier
-        #      silencieusement -- WV5788 exempte car regle 5 est un override volontaire, pas une
-        #      zone "a verifier").
-        # Regle 1 (interdit Zone=0) : satisfaite une fois le repli Python M-1 applique -- la
-        # formule Excel seule peut encore produire 0 de facon transitoire (regle 3), corrige
-        # dans le bloc post-Calculate plus bas.
-        # zone_brute reference directement C{row} (colonne interne de controle, formula index 2
-        # ci-dessous) plutot que de reecrire l'expression XLOOKUP -- C{row} EST deja "IF(LEN>2,
-        # zone,'inconnu')" via son propre COUNTIF, donc equivalent a l'ancienne logique inline
-        # (LEN(C)>2 -> C ; sinon Pays=FR -> France ; sinon C tel quel, qui vaut alors "inconnu"
-        # ou un vrai zonage court) SANS reevaluer XLOOKUP plusieurs fois dans la meme formule
-        # (evite un formule M demesuree sur 6000-8700 lignes).
-        zone_brute = 'IF(LEN(C{row})>2,C{row},IF(L{row}="FR","France",C{row}))'
-        fret_expr = tcd_lookup(col_fret) if col_fret else '""'
-        plus_value_expr = tcd_lookup(col_plus_value) if col_plus_value else '""'
-        zone_calculee_sans_wv = (
-            f'IF(AND(OR({zone_brute}=0,{zone_brute}=""),{fret_expr}<>"",{fret_expr}>=3,{fret_expr}<=8,OR(L{{row}}="",L{{row}}="FR")),"France",'
-            f'IF(AND(OR({zone_brute}=0,{zone_brute}=""),OR({fret_expr}="",{fret_expr}=0)),0,'
-            f'{zone_brute}))'
-        )
-        formula_zone = (
-            f'=IF(D{{row}}="Verde Trad","France",'
-            f'IF(AND({plus_value_expr}<>"",{plus_value_expr}<2,({zone_calculee_sans_wv})="France"),'
-            f'"A VERIFIER",{zone_calculee_sans_wv}))'
-        )
+        # RETOUR EN ARRIERE 2026-09-08 (demande pole transport) : les regles CDC 2026-08-27
+        # (fret 3-8EUR->France, repli Zone via fichier import M-1, marqueur "A VERIFIER",
+        # override Verde Trad/WV5788) sont ABANDONNEES -- retour a la formule simple d'origine
+        # (identique au classeur fait-main de juillet 2026) : =SI(NBCAR(C)>2;C;SI(L="FR";
+        # "France";RECHERCHEX(I,'zone colis poids assurance'!D:D,'zone colis poids
+        # assurance'!F:F))). La formule generee par les regles CDC etait devenue enorme
+        # (zone_brute repetee 6 fois) et le pole transport ne veut plus de ce comportement.
+        formula_zone = ('=IF(LEN(C{row})>2,C{row},IF(L{row}="FR","France",'
+                         '_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!F:F)))')
 
         # BUG TROUVE 2026-08-31 (tracking A1912WTZX8M, frais de douane GB) : RIGHT(LEFT(I,8),6)
         # suppose un format "1Z"+compte(6) -- faux pour les trackings de frais de dedouanement/
@@ -1116,11 +1078,22 @@ def main():
             7: "=_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!U:U)",  # G Ref.2
             9: "=TCD!E{tcdrow}",  # I N° Tracking
             11: '=IF(B{row}="particulier","P",IF(X{row}="","E","P"))',  # K E/P
-            12: "=_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!CH:CH)",  # L Pays
-            13: formula_zone,  # M Zone (regles 1/2/4/5 CDC 2026-08-27, cf. ci-dessus)
+            # L Pays -- BUG TROUVE 2026-09-08 : un XLOOKUP simple prend la PREMIERE ligne du
+            # tracking dans 'Facture UPS', or un meme tracking a souvent plusieurs lignes
+            # (charges/surcharges) dont les premieres ont CH (Pays) vide et le vrai pays
+            # n'apparait que sur une ligne suivante (constate sur juillet 2026, ex. tracking
+            # 1Z79A7T06810360359 : 5 lignes, CH=['','','FR','FR','FR']) -> Pays sortait "0"/vide
+            # a tort. Cherche desormais la PREMIERE ligne du tracking dont CH n'est PAS vide
+            # (XLOOKUP sur le tableau (Y=I{row})*(CH<>""), cherche 1) ; si aucune n'est trouvee
+            # (vraiment aucun pays sur tout le tracking), repli sur le XLOOKUP simple d'origine.
+            12: ("=IFERROR(_xlfn.XLOOKUP(1,('Facture UPS'!Y:Y=I{row})*('Facture UPS'!CH:CH<>\"\"),"
+                 "'Facture UPS'!CH:CH),_xlfn.XLOOKUP(I{row},'Facture UPS'!Y:Y,'Facture UPS'!CH:CH))"),
+            13: formula_zone,  # M Zone (formule simple, cf. ci-dessus -- regles CDC 2026-08-27 abandonnees)
             14: "=MAX(_xlfn.XLOOKUP(I{row},'zone colis poids assurance'!D:D,'zone colis poids assurance'!E:E),A{row})",  # N Nbr Colis
             15: '=IF(D{row}="UPS_COD",_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!J:J),_xlfn.XLOOKUP(I{row},\'zone colis poids assurance\'!D:D,\'zone colis poids assurance\'!I:I))',  # O Poids
-            16: '=IF(D{row}="Verde Trad","ST",IF(COUNTIF(\'ST SV\'!H:H,I{row})=0,"inconnu",_xlfn.XLOOKUP(I{row},\'ST SV\'!H:H,\'ST SV\'!N:N)))',  # P mode envoi (Verde Trad force "ST", regle 5)
+            # P mode envoi -- override Verde Trad ("D=Verde Trad"->"ST") abandonne le
+            # 2026-09-08 avec le reste des regles CDC (retour a la formule d'origine).
+            16: '=IF(COUNTIF(\'ST SV\'!H:H,I{row})=0,"inconnu",_xlfn.XLOOKUP(I{row},\'ST SV\'!H:H,\'ST SV\'!N:N))',
         }
 
         if col_tva:
@@ -1277,23 +1250,9 @@ def main():
             # N=5,O=6,P(Mode envoi)=7,Q(TVA)=8.
             IDX_TRACKING, IDX_PAYS, IDX_ZONE, IDX_MODE, IDX_TVA = 0, 3, 4, 7, 8
 
-            # Repli Zone M-1 (regle 3) : Zone encore 0/vide apres le calcul Excel -> tracking
-            # cherche dans le fichier import du mois precedent (zone_m1_map).
-            corrections_m1 = []  # (index 0-based dans valuesZoneVal, zone)
-            for i, row in enumerate(valuesZoneVal):
-                zone_v = row[IDX_ZONE]
-                if zone_v in (0, "0", "", None):
-                    t = str(row[IDX_TRACKING] or "").strip()
-                    zone_m1 = zone_m1_map.get(t)
-                    if zone_m1:
-                        corrections_m1.append((i, zone_m1))
-            if corrections_m1:
-                for i, zone_m1 in corrections_m1:
-                    r = i + 2
-                    wsImp.Cells(r, 13).Value = zone_m1  # M Zone, EN VALEUR (donnee externe)
-                print(f"'Fichier import' : {len(corrections_m1)} tracking(s) à Zone=0 sans frêt complété(s) via le fichier import du mois précédent.")
-                xl.Calculate()
-                valuesZoneVal = rangeZoneVal.Value  # relecture : les validations ci-dessous doivent voir les zones corrigees
+            # (Repli Zone M-1 abandonne le 2026-09-08 avec le reste des regles CDC
+            # 2026-08-27 -- Zone reste telle que calculee par la formule Excel, sans
+            # repli automatique sur un ancien fichier import.)
 
             # Validation TVA=0 hors UE (point B) -- ALERTE CONSOLE UNIQUEMENT, aucune ecriture.
             suspects_tva = []
@@ -1419,17 +1378,26 @@ def main():
                 if n_fantomes:
                     print(f"'Fichier import' : {n_fantomes} ligne(s) fantome(s) (tracking absent des donnees sources, artefact COM transitoire) exclue(s) de l'export final.")
                 n_err = 0
-                def clean(v):
+                # Index 0-based DANS cette plage D->X (D=0) : Ref.1=2, Ref.2=3 -- BUG TROUVE
+                # 2026-09-09 (demande pole transport) : ces colonnes sont des references texte
+                # (id client, bon de commande...) jamais des quantites, or elles ressortaient
+                # parfois "0.0" (colonne vide cote source, lue comme nombre par Excel/COM) --
+                # l'ERP rejette l'import si le fichier contient un "0" dans Ref.1/Ref.2. Ces deux
+                # colonnes sont donc videes explicitement quand leur valeur est 0/0.0.
+                IDX_REF1_VALUES, IDX_REF2_VALUES = 2, 3
+                def clean(v, col_idx=None):
                     nonlocal n_err
                     if isinstance(v, int) and not isinstance(v, bool) and v < -1000000:
                         n_err += 1
+                        return ""
+                    if col_idx in (IDX_REF1_VALUES, IDX_REF2_VALUES) and v in (0, 0.0, "0", "0.0"):
                         return ""
                     return "" if v is None else v
                 export_path = os.path.splitext(sortie)[0] + "_import_valeurs.csv"
                 with open(export_path, "w", encoding="utf-8-sig", newline="") as f:
                     w = csv.writer(f, delimiter=";")
                     for row in values:
-                        w.writerow([clean(v) for v in row])
+                        w.writerow([clean(v, i) for i, v in enumerate(row)])
                 if n_err:
                     print(f"AVERTISSEMENT: {n_err} cellule(s) en erreur COM lors de l'export Fichier import (valeurs) -- laissees vides, a verifier.")
                 print(f"EXPORT_IMPORT_VALEURS:{export_path}")
