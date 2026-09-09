@@ -26,7 +26,12 @@ function validate(importRows, opts = {}) {
     // "zone inconnue", DPD "inconnu") -- pas la peine de dupliquer l'alerte ici,
     // route en info comme le pattern hors-grille Kuehne.
     const zoneNonResolue = /^zone inconnue$/i.test(o.Zone) || /^inconnu$/i.test(o.Zone);
-    if (!o.Zone) {
+    // BUG TROUVE 2026-09-09 (UPS, remontee pole transport) : "!o.Zone" est FAUX quand
+    // Zone vaut la chaine "0" (piege JS : !"0" === false, seule une chaine VIDE est
+    // falsy) -- l'alerte ne remontait donc jamais pour un Zone="0" ecrit tel quel dans
+    // le CSV final (Zone num:false dans IMPORT_COLUMNS, jamais convertie en nombre).
+    // Commun a tous les transporteurs (validate() n'est pas specifique a UPS).
+    if (!o.Zone || o.Zone === '0') {
       alerts.push(`L${l} ${t}: ZONE manquante`);
     } else if (zoneHorsGrille) {
       if (o._horsGrille) {
