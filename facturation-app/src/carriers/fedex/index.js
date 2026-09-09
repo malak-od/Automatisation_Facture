@@ -94,7 +94,17 @@ function readFedexCsv(p) {
     const c = text[i];
     if (inQuotes) {
       if (c === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        // BUG TROUVE 2026-09-09 (CSV reel d'aout 2026, factures 634364547/634374150) : des
+        // champs mal echappes par FedEx ("\".OK", "9."-3COUR -- un guillemet interne SANS
+        // doublement CSV standard) fermaient le champ a tort sur ce guillemet isole,
+        // desequilibrant le comptage pour TOUT LE RESTE DU FICHIER -> plusieurs lignes
+        // suivantes fusionnees en un seul champ corrompu (numero de facture pollue par le
+        // contenu de lignes non liees, visible dans les infos "Facture(s) absente(s) des
+        // PDF..."). Un vrai guillemet fermant est TOUJOURS suivi d'un delimiteur (, \r \n ou
+        // fin de texte) -- sinon on reste dans le champ (le "\"" fait partie du texte).
+        else if (text[i + 1] === ',' || text[i + 1] === '\r' || text[i + 1] === '\n' || i + 1 >= text.length) inQuotes = false;
+        else field += c;
       } else field += c;
     } else if (c === '"') inQuotes = true;
     else if (c === ',') { row.push(field); field = ''; }
