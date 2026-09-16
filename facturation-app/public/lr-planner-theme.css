@@ -22,7 +22,7 @@ button,input,select,textarea { font-family: inherit; }
   padding: 24px 16px; gap: 0;
 }
 .lr-sidebar .brand { display:flex; align-items:center; gap:12px; color:white; padding:0 8px 24px; margin:0; font-size:18px; font-weight:700; }
-.lr-sidebar .brand::before { content:''; display:block; flex:0 0 36px; width:36px; height:36px; background:url('/brand/lr-symbol.svg') center/contain no-repeat; }
+.lr-sidebar .brand::before { content:''; display:none; flex:0 0 36px; width:36px; height:36px; background:url('/brand/lr-symbol.svg') center/contain no-repeat; }
 .lr-sidebar .brand :is(.brand-mark,.logo) { display:none; }
 .lr-sidebar .brand :is(strong,b) { font-size:18px; color:white; }
 .lr-sidebar .brand small { display:block; margin-top:4px; font-size:10px; font-weight:500; letter-spacing:.08em; color:#ffffffb3; }
