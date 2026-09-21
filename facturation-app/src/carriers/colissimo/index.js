@@ -115,6 +115,7 @@ async function process(files) {
 
   const warnings = [];
   const infos = [];
+  const pdfReconciliation = [];
 
   const importM1Paths = files.importM1 || [];
   const m1Map = importM1Paths.length ? lireImportM1(importM1Paths[0]) : new Map();
@@ -293,9 +294,11 @@ async function process(files) {
   let totalGazoleCalcule = 0;
   for (const [tracking, groupe] of groupes) {
     const base = groupe.find((r) => r.poidsKg != null) || groupe[0];
-    // Ref.1 : premiere valeur non vide trouvee dans le groupe (reproduit XLOOKUP -- 1re
-    // correspondance sur le tracking, cf. formule modele en tete de fichier).
-    const refExterne = groupe.find((r) => r.refExterne)?.refExterne || '';
+    // Ref.1 : premiere valeur non vide ET non nulle trouvee dans le groupe (reproduit XLOOKUP
+    // -- 1re correspondance sur le tracking, cf. formule modele en tete de fichier). "0"/"0.0"
+    // (valeur placeholder cote CSV brut Colissimo, pas une vraie reference) exclue au meme
+    // titre que "" -- ne doit jamais apparaitre telle quelle dans le fichier import.
+    const refExterne = groupe.find((r) => r.refExterne && !/^0+([.,]0+)?$/.test(r.refExterne.trim()))?.refExterne || '';
     const postes = Object.fromEntries(POSTE_KEYS.map((k) => [k, 0]));
     for (const r of groupe) {
       if (r.categorie && POSTE_KEYS.includes(r.categorie)) postes[r.categorie] = round2(postes[r.categorie] + r.totalHt);
@@ -357,21 +360,33 @@ async function process(files) {
       const pdfParse = require('pdf-parse');
       const buf = require('fs').readFileSync(p);
       const { text } = await pdfParse(buf);
-      const mFacture = /FACTURE N[°\s]*([A-Z0-9]+)/.exec(text);
-      // "€" du PDF Colissimo mal encode par pdf-parse (ressort en "¤", pas � comme avec
-      // pdfplumber cote Python) -- BUG TROUVE 2026-08-17, meme famille que le fix Python
-      // (finaliser_colissimo.py::extract_pdf_total_ht) : "." accepte n'importe quel caractere
-      // de fin au lieu du "€" littéral qui ne matchait plus jamais. TOTAL HT et son montant
-      // sont aussi separes par un saut de ligne ici (pas juste des espaces) -- deja couvert
-      // par \s*.
-      const mTotal = /TOTAL\s*HT\s*([\d\s]+[.,]\d{2})\s*./.exec(text);
+      // Insensible a la casse : le format electronique 2026-08 ecrit les libelles tout en
+      // MAJUSCULES et colle le signe/montant sans espace ("Facture N°" -> "MONTANT TOTAL
+      // HT17 449,47" / "INDEMNISATIONS-523,44"), contrairement a l'ancien format espace
+      // ("TOTAL HT 23 220,68 €") -- meme correctif que finaliser_colissimo.py::extract_pdf_total_ht.
+      const mFacture = /FACTURE\s*N[°\s]*([A-Z0-9]+)/i.exec(text);
+      // Capture bornee au nombre (chiffres/espaces/espace insecable + separateur decimal + 2
+      // decimales) -- BUG TROUVE 2026-08-17 puis reconfirme 2026-09 (facture aout 2026) : le
+      // "." de fin gourmand capturait le debut du mot suivant (ex. "TOTAL HT17 449,47\nM...").
+      // "MONTANT" optionnel : ancien format facture = "TOTAL HT 23 220,68 €" (juin/juillet
+      // 2026), nouveau format electronique = "MONTANT TOTAL HT17 449,47" (aout 2026) -- les
+      // deux doivent matcher (meme correctif que finaliser_colissimo.py::extract_pdf_total_ht).
+      const mTotal = /(?:MONTANT\s*)?TOTAL\s*HT\s*([\d\s]+[.,]\d{2})/i.exec(text);
+      const mIndem = /INDEMNISATIONS?\s*-?\s*([\d\s]+[.,]\d{2})/i.exec(text);
+      const mAvoir = /AVOIRS?\s*-?\s*([\d\s]+[.,]\d{2})/i.exec(text);
       if (!mFacture || !mTotal) { warnings.push(`PDF ${p.split(/[\\/]/).pop()} : numéro de facture/total introuvable, ignoré pour la réconciliation.`); continue; }
       const numeroFacture = mFacture[1];
       const totalPdf = num(mTotal[1].replace(/\s/g, ''));
+      const indemnisation = mIndem ? num(mIndem[1].replace(/\s/g, '')) : null;
+      const avoir = mAvoir ? num(mAvoir[1].replace(/\s/g, '')) : null;
       const calcule = totalBrutParFacture.get(numeroFacture);
       if (calcule == null) { warnings.push(`Facture PDF ${p.split(/[\\/]/).pop()} (${numeroFacture}) : aucune ligne correspondante trouvée dans les fichiers traités.`); continue; }
-      const ecart = round2(calcule - totalPdf);
-      infos.push(`Facture PDF ${p.split(/[\\/]/).pop()} (${numeroFacture}) : Total HT PDF (avant indemnisations) = ${totalPdf.toFixed(2)} EUR, calculé = ${calcule.toFixed(2)} EUR (écart ${ecart >= 0 ? '+' : ''}${ecart.toFixed(2)} EUR — les indemnisations/avoirs du PDF ne sont pas automatiquement déduits, vérifier manuellement si écart important).`);
+      // Rapprochement complet : Somme Total HT (calculé) doit égaler PDF HT + Indemnisation + Avoir
+      // (valeurs absolues, cf. feuille "Bilan Factures" D/E/F/G du classeur).
+      const sommeReconciliee = round2(totalPdf + (indemnisation || 0) + (avoir || 0));
+      const ecart = round2(calcule - sommeReconciliee);
+      infos.push(`Facture PDF ${p.split(/[\\/]/).pop()} (${numeroFacture}) : PDF HT = ${totalPdf.toFixed(2)} EUR, Indemnisation = ${indemnisation != null ? indemnisation.toFixed(2) : 'n/a'} EUR, Avoir = ${avoir != null ? avoir.toFixed(2) : 'n/a'} EUR (Somme totale PDF = ${sommeReconciliee.toFixed(2)} EUR), calculé = ${calcule.toFixed(2)} EUR (écart ${ecart >= 0 ? '+' : ''}${ecart.toFixed(2)} EUR).`);
+      pdfReconciliation.push({ numeroFacture, totalPdf, indemnisation, avoir });
     } catch (e) {
       warnings.push(`PDF ${p.split(/[\\/]/).pop()} : lecture impossible (${e.message}).`);
     }
@@ -394,7 +409,7 @@ async function process(files) {
     header: headerRef || [],
     rows: recs, recs, importRows, controle, warnings, alerts, infos,
     posteKeys: POSTE_KEYS, cfg, gazoleKey: 'Taxe gazole',
-    rawCompCols, rawCompRow,
+    rawCompCols, rawCompRow, pdfReconciliation,
     sheetNames: { raw: 'Facture Colissimo', import: 'Import CSV' },
     period: dateValidite ? `${dateValidite.slice(6)}_${dateValidite.slice(3, 5)}` : 'export',
   };

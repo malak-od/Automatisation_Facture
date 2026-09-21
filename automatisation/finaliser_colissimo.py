@@ -212,6 +212,57 @@ def resolve_missing_modes_envois(modes_ws, prefix_pays_seen, xlUp):
     return added
 
 
+def load_table_correspondance_json():
+    """Charge 'table_correspondance' depuis config.json du carrier Node (source de verite
+    unique, deja tenue a jour manuellement a chaque nouveau code Colissimo -- cf.
+    facturation-app/src/carriers/colissimo/index.js). Retourne {} si introuvable (ne bloque
+    jamais la generation)."""
+    import json
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "facturation-app", "src", "carriers", "colissimo", "config.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("table_correspondance", {})
+    except Exception:
+        return {}
+
+
+def resolve_missing_table_correspondance(tc_ws, codes_seen, xlUp):
+    """Ajoute automatiquement a la feuille 'Table de correspondance' les 'Code charge'
+    presents dans les donnees brutes du mois mais absents de la feuille -- SEULEMENT si le
+    code est deja connu dans config.json/table_correspondance (source de verite tenue a jour
+    manuellement des qu'un nouveau code Colissimo est confirme, cf. resolve_missing_pays pour
+    le meme principe applique aux pays). BUG TROUVE 2026-09-11 (tracking 6A07076209221,
+    facture aout 2026) : CH_S_SMIC ajoute a config.json (donc reconnu cote moteur JS) mais
+    JAMAIS reporte dans ce classeur modele -- le XLOOKUP de 'Facture Colissimo'!G restait en
+    #N/A, la charge (ex. 0,06€ 'AJUSTEMENT SMIC') absente du TCD/Import CSV malgre le fix
+    JS. Un code absent de config.json (jamais vu/confirme) reste non reclasse comme avant --
+    aucune invention. Retourne la liste (code, poste) ajoutee, pour log/warning."""
+    known = load_table_correspondance_json()
+    if not known:
+        return []
+    last_row = tc_ws.Cells(tc_ws.Rows.Count, 1).End(xlUp).Row
+    existing = set()
+    for r in range(2, last_row + 1):
+        code = tc_ws.Cells(r, 1).Value
+        if code:
+            existing.add(str(code))
+
+    added = []
+    row = last_row
+    for code in sorted(codes_seen):
+        if not code or code in existing:
+            continue
+        poste = known.get(code)
+        if not poste:
+            continue  # code jamais confirme dans config.json -- reste non reclasse, ajout manuel requis
+        row += 1
+        tc_ws.Cells(row, 1).Value = code
+        tc_ws.Cells(row, 2).Value = poste
+        existing.add(code)
+        added.append((code, poste))
+    return added
+
+
 def extract_pays_and_prefixes(hdr, rows):
     """Extrait, depuis les lignes brutes deja alignees (load_rows), l'ensemble des noms
     de pays destination distincts (pour resolve_missing_pays) et des couples
@@ -289,12 +340,15 @@ def load_rows(presta_paths, douane_paths):
 
 
 def extract_pdf_total_ht(pdf_path):
-    """1ere page de la facture Colissimo, bloc 'Votre recapitulatif de facture HT' --
-    extrait 'TOTAL HT' + 'Indemnisations' + 'Avoirs' (libelles explicites en clair, ex.
-    'TOTAL HT 23 220,68 �' / 'Indemnisations -341,78 �' / 'Avoirs -8,00 �' -- capture
-    ecran utilisateur 2026-08-17, facture de juillet 2026). 'Avoirs' n'apparait pas tous
-    les mois (absent en juin 2026) -- reste None si le libelle n'est pas trouve, PAS 0
-    (0 serait une fausse info, alors qu'on ne sait juste pas)."""
+    """1ere page de la facture Colissimo, bloc 'Votre recapitulatif HT' -- extrait
+    'MONTANT TOTAL HT' + 'INDEMNISATIONS' + 'AVOIR(S)' (libelles en clair, casse variable
+    selon le format de facture, ex. ancien format 'TOTAL HT 23 220,68 �' / 'Indemnisations
+    -341,78 �' vs nouveau format electronique 2026-08 'MONTANT TOTAL HT17 449,47' /
+    'INDEMNISATIONS-523,44', tout en majuscules et colle sans espace au nombre -- confirme
+    sur la facture d'aout 2026). Recherche insensible a la casse (re.I) ; le signe '-' est
+    tantot separe par un espace, tantot colle juste avant le nombre selon le format.
+    'AVOIR'/'AVOIRS' n'apparait pas tous les mois -- reste None si le libelle n'est pas
+    trouve, PAS 0 (0 serait une fausse info, alors qu'on ne sait juste pas)."""
     try:
         import pdfplumber
     except ImportError:
@@ -304,15 +358,21 @@ def extract_pdf_total_ht(pdf_path):
             text = pdf.pages[0].extract_text() or ""
     except Exception:
         return None, None, None, None
-    m_num = re.search(r"FACTURE\s*N[°\s]*([A-Z0-9]+)", text)
-    # "€" du PDF Colissimo parfois mal encode (extrait comme "�" par pdfplumber selon
-    # la police embarquee) -- "." accepte n'importe quel caractere de fin, pas seulement "€".
-    m_total = re.search(r"TOTAL\s*HT\s*([\d\s\xa0]+,\d{2})\s*.", text)
+    m_num = re.search(r"FACTURE\s*N[°\s]*([A-Z0-9]+)", text, re.I)
+    # Capture bornee au nombre (chiffres/espaces/espace insecable + virgule + 2 decimales) --
+    # ne mange plus le mot suivant (ex. ancien bug : "TOTAL HT17 449,47\nM" au lieu de "17 449,47",
+    # le "." de fin gourmand capturait le debut de "MONTANT TOTAL NET HT" a la ligne suivante).
+    # "MONTANT" optionnel : l'ancien format de facture ecrit juste "TOTAL HT 23 220,68 €"
+    # (juin/juillet 2026), le nouveau format electronique "MONTANT TOTAL HT17 449,47" (aout
+    # 2026) -- matcher "TOTAL HT" seul risquerait d'accrocher l'entete de tableau "TOTAL HT
+    # MONTANT TVA TOTAL TTC" (sans nombre immediat), mais celle-ci echoue deja a matcher
+    # \s*([\d...) faute de chiffre juste apres, donc sans danger.
+    m_total = re.search(r"(?:MONTANT\s*)?TOTAL\s*HT\s*([\d\s\xa0]+,\d{2})", text, re.I)
     # Indemnisations/Avoirs : toujours negatifs dans le PDF (deduits du total) -- stockes
     # en VALEUR ABSOLUE dans "Bilan Factures" (confirme sur juin/juillet : G=D+E+F doit
     # redonner le total HT positif, cf. 'Somme total' = 'PDF HT'+'Indemnisation'+'Avoir').
-    m_indem = re.search(r"Indemnisations\s*-?([\d\s\xa0]+,\d{2})\s*.", text)
-    m_avoir = re.search(r"Avoirs\s*-?([\d\s\xa0]+,\d{2})\s*.", text)
+    m_indem = re.search(r"INDEMNISATIONS?\s*-?\s*([\d\s\xa0]+,\d{2})", text, re.I)
+    m_avoir = re.search(r"AVOIRS?\s*-?\s*([\d\s\xa0]+,\d{2})", text, re.I)
     numero = m_num.group(1) if m_num else None
 
     def parse_montant(m):
@@ -457,6 +517,23 @@ def main():
         added_modes = resolve_missing_modes_envois(modes_ws, prefix_pays_codes, xlUp)
         for concat, prefixe, pays_code, zone, mode in added_modes:
             print(f"AJOUT_MODE_ENVOI_AUTO:{concat} -> zone={zone}, mode={mode} (DEDUIT du prefixe '{prefixe}' le plus frequent -- A VERIFIER, pas une certitude)")
+
+        # c) Table de correspondance : ajout automatique des "Code charge" DEJA CONNUS dans
+        #    config.json (source de verite tenue a jour manuellement, cote moteur JS) mais pas
+        #    encore reportes dans ce classeur modele -- meme principe que a)/b) ci-dessus.
+        #    BUG TROUVE 2026-09-11 : sans ceci, un code ajoute a config.json restait invisible
+        #    du XLOOKUP Excel (#N/A), la charge correspondante absente du TCD/Import CSV.
+        idx_code_charge = hdr.index("Code charge") if "Code charge" in hdr else None
+        codes_seen = set()
+        if idx_code_charge is not None:
+            for r in rows:
+                code = r[idx_code_charge].strip() if idx_code_charge < len(r) and r[idx_code_charge] else ""
+                if code:
+                    codes_seen.add(code)
+        tc_ws = wb.Sheets("Table de correspondance")
+        added_tc = resolve_missing_table_correspondance(tc_ws, codes_seen, xlUp)
+        for code, poste in added_tc:
+            print(f"AJOUT_TABLE_CORRESPONDANCE_AUTO:{code} -> {poste} (deja confirme dans config.json, reporte automatiquement dans le classeur)")
 
         # ---- 1) Facture Colissimo : purge + collage des donnees brutes + formules A-G ----
         FIRST_RAW_COL = 8   # colonne H : debut des donnees brutes CSV
@@ -641,6 +718,29 @@ def main():
         elif impNewLast < impOldLast:
             retry(lambda: imp.Range(imp.Cells(impNewLast + 1, 1), imp.Cells(impOldLast, LAST_COL_IMPORT)).ClearContents())
         xl.Calculate()  # recalcule Import CSV une fois etendu/reduit
+
+        # Ref.1/Ref.2 (colonnes C/D) : le XLOOKUP renvoie parfois "0"/"0.0" (valeur
+        # placeholder du CSV brut Colissimo dans "Reference externe colis client", pas une
+        # vraie reference) -- videe ici en VALEUR LITTERALE apres calcul, decision
+        # utilisateur 2026-09-11 ("l'idee est de ne pas avoir de 0"). Sans impact sur la
+        # formule elle-meme : le prochain FillDown() (regeneration du mois suivant) la
+        # reapplique de toute facon depuis la ligne modele C2/D2.
+        if impNewLast >= 2:
+            for col in (3, 4):  # C = Ref.1, D = Ref.2
+                rng = imp.Range(imp.Cells(2, col), imp.Cells(impNewLast, col))
+                vals = rng.Value
+                rows = vals if isinstance(vals, tuple) else ((vals,),)
+                changed = False
+                new_vals = []
+                for (v,) in rows:
+                    s = str(v).strip() if v is not None else ""
+                    if re.fullmatch(r"0+([.,]0+)?", s):
+                        new_vals.append((None,))
+                        changed = True
+                    else:
+                        new_vals.append((v,))
+                if changed:
+                    retry(lambda rng=rng, new_vals=tuple(new_vals): setattr(rng, "Value", new_vals))
 
         # ---- 4) Reconciliation PDF : TOTAL HT Colissimo vs Somme de Total HT (Bilan Factures) ----
         if pdf_paths:
