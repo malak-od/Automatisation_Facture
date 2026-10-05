@@ -78,14 +78,31 @@ function colIndexByName(header, name) {
   return -1;
 }
 
-/** Lit un CSV FedEx (export portail, en-tete FR, separateur virgule, encodage UTF-8 --
- * confirme sur les 2 CSV bruts reels de juin 2026, tous deux en francais malgre le meme
- * prefixe "0g000e48hq_" observe sur un export anglais d'un autre mois dans la video). */
+/** Lit un CSV FedEx (export portail, en-tete FR ou EN, encodage UTF-8 -- confirme sur les 2
+ * CSV bruts reels de juin 2026, tous deux en francais malgre le meme prefixe "0g000e48hq_"
+ * observe sur un export anglais d'un autre mois dans la video).
+ * Separateur virgule ou point-virgule selon l'export (BUG TROUVE 2026-09-09 : un CSV Shipment
+ * Detail anglais recu utilisait ";" -- le parsage en dur sur "," transformait alors toute la
+ * ligne d'en-tete en un seul champ, d'ou "Colonne(s) attendue(s) introuvable(s)" alors que les
+ * libelles anglais etaient bel et bien presents). Detecte sur la 1ere ligne (hors zone entre
+ * guillemets, pour ne pas se laisser tromper par une virgule/point-virgule dans un champ texte). */
+function detectDelimiter(text) {
+  const firstLine = text.split(/\r?\n/, 1)[0] || '';
+  let commas = 0, semicolons = 0, inQuotes = false;
+  for (const c of firstLine) {
+    if (c === '"') inQuotes = !inQuotes;
+    else if (!inQuotes && c === ',') commas++;
+    else if (!inQuotes && c === ';') semicolons++;
+  }
+  return semicolons > commas ? ';' : ',';
+}
+
 function readFedexCsv(p) {
   const fs = require('fs');
   const buf = fs.readFileSync(p);
   let text = buf.toString('utf8');
   if (text.charCodeAt(0) === 0xfeff || text.slice(0, 3) === '﻿') text = text.slice(1);
+  const delim = detectDelimiter(text);
   const rows = [];
   let row = [];
   let field = '';
@@ -103,11 +120,11 @@ function readFedexCsv(p) {
         // contenu de lignes non liees, visible dans les infos "Facture(s) absente(s) des
         // PDF..."). Un vrai guillemet fermant est TOUJOURS suivi d'un delimiteur (, \r \n ou
         // fin de texte) -- sinon on reste dans le champ (le "\"" fait partie du texte).
-        else if (text[i + 1] === ',' || text[i + 1] === '\r' || text[i + 1] === '\n' || i + 1 >= text.length) inQuotes = false;
+        else if (text[i + 1] === delim || text[i + 1] === '\r' || text[i + 1] === '\n' || i + 1 >= text.length) inQuotes = false;
         else field += c;
       } else field += c;
     } else if (c === '"') inQuotes = true;
-    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === delim) { row.push(field); field = ''; }
     else if (c === '\r') { /* skip */ }
     else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
     else field += c;
@@ -212,7 +229,11 @@ function extractSupplements(text) {
 async function extractFedexPdfInfo(pdfPath) {
   const buf = require('fs').readFileSync(pdfPath);
   const { text } = await pdfParse(buf);
-  const mInv = /No de Client\s*:\s*\nNo de Facture\s*:\s*\nDate de la facture\s*:\s*\nDate d.[eé]ch[eé]ance\s*\nMontant d[uû]\s*\n\*+\d+\s*\n(\d+)\s*\n/.exec(text);
+  // BUG TROUVE 2026-09-09 (PDF reel facture 634451468) : le "No de Client" apparait parfois EN
+  // CLAIR (200720433), parfois MASQUE (***1234) selon le PDF -- le regex n'acceptait QUE la
+  // forme masquee (\*+\d+), donc "numero de facture introuvable" a tort sur tout PDF avec le
+  // numero de client en clair juste avant le numero de facture.
+  const mInv = /No de Client\s*:\s*\nNo de Facture\s*:\s*\nDate de la facture\s*:\s*\nDate d.[eé]ch[eé]ance\s*\nMontant d[uû]\s*\n(?:\*+)?\d+\s*\n(\d+)\s*\n/.exec(text);
   const mTotal = /Total d[uû]\s*EUR\s*([\d.,]+)/.exec(text);
   return {
     file: path.basename(pdfPath),
@@ -223,7 +244,7 @@ async function extractFedexPdfInfo(pdfPath) {
   };
 }
 
-async function process(files) {
+async function process(files, opts) {
   const csvPaths = files.csv || [];
   if (!csvPaths.length) throw new Error('Aucun fichier fourni (attendu : Shipment detail FedEx, CSV export portail).');
 
@@ -236,16 +257,25 @@ async function process(files) {
   // f.path, PAS f.originalname -- bug constate 2026-08-20 : le nom "FEDEX_<invoice>_<compte>.pdf"
   // n'existe QUE sur le disque de l'utilisateur avant upload, jamais recu tel quel par le
   // carrier). Reutilise plus bas pour la reconciliation "Total dû" (pas de 2e lecture).
+  // displayName() : nom d'origine tel que depose dans l'UI si dispo (fileNames, transmis par
+  // server.js), sinon repli sur le hash multer (demande utilisateur 2026-09-09 : l'operateur ne
+  // connait pas le hash, seulement le nom de fichier qu'il a lui-meme depose).
   const pdfPaths = files.pdf || [];
+  const pdfOriginalNames = (opts && opts.fileNames && opts.fileNames.pdf) || [];
+  const displayName = (p) => {
+    const idx = pdfPaths.indexOf(p);
+    return (idx >= 0 && pdfOriginalNames[idx]) || path.basename(p);
+  };
   const pdfs = [];
   const pdfInvoiceNums = new Set();
   for (const p of pdfPaths) {
     try {
       const r = await extractFedexPdfInfo(p);
+      r.file = displayName(p);
       if (r.totalDu != null) pdfs.push(r);
-      else warnings.push(`PDF ${path.basename(p)} : "Total dû" introuvable, ignoré pour la réconciliation.`);
+      else warnings.push(`PDF ${displayName(p)} : "Total dû" introuvable, ignoré pour la réconciliation.`);
       if (r.numeroFacture) pdfInvoiceNums.add(r.numeroFacture);
-      else warnings.push(`PDF ${path.basename(p)} : numéro de facture introuvable dans le contenu — ignoré pour le contrôle "facture sans PDF".`);
+      else warnings.push(`PDF ${displayName(p)} : numéro de facture introuvable dans le contenu — ignoré pour le contrôle "facture sans PDF".`);
     } catch (e) {
       warnings.push(`PDF ${path.basename(p)} : lecture impossible (${e.message}).`);
     }

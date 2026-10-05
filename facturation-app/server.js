@@ -10,6 +10,7 @@ const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const execFileAsync = require('util').promisify(execFile);
+const { ZipArchive } = require('archiver');
 const registry = require('./src/registry');
 const { writeImportCsv, writeWorkbook, readImportRowsFromValuesCsv, readImportCsvFinal } = require('./src/core/excelOut');
 const { validate } = require('./src/core/validate');
@@ -100,6 +101,27 @@ app.post('/api/reveal', (req, res) => {
   res.json({ ok: true });
 });
 
+// Telecharge le dossier de sortie en .zip (marche a distance, contrairement a /api/reveal qui
+// ouvre l'Explorateur DU SERVEUR -- invisible si le logiciel est utilise via un lien, pas en
+// local sur le poste qui heberge le serveur). Lit directement OUTPUTS/<stamp>/, pas sa copie
+// dans Telechargements (source la plus directe, pas d'attente de la copie best-effort).
+app.get('/api/download-zip/:stamp', (req, res) => {
+  const stamp = String(req.params.stamp || '').replace(/[^a-z0-9_]/gi, '');
+  const dir = path.join(OUTPUTS, stamp);
+  if (!stamp || !dir.startsWith(OUTPUTS) || !fs.existsSync(dir)) return res.status(400).json({ error: 'Dossier introuvable' });
+
+  res.attachment(`${stamp}.zip`);
+  const archive = new ZipArchive({ zlib: { level: 9 } });
+  archive.on('error', (err) => {
+    console.error('Erreur creation zip :', err.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Erreur lors de la creation du zip' });
+  });
+  archive.pipe(res);
+  // Exclut run.json (metadonnees internes, pas un livrable a telecharger)
+  archive.glob('**/*', { cwd: dir, ignore: ['run.json'] });
+  archive.finalize();
+});
+
 // Traitement : recoit les fichiers + l'id transporteur, genere les livrables
 app.post('/api/process', upload.any(), async (req, res) => {
   try {
@@ -118,7 +140,12 @@ app.post('/api/process', upload.any(), async (req, res) => {
     const fileNames = {};
     for (const f of req.files || []) {
       (files[f.fieldname] = files[f.fieldname] || []).push(f.path);
-      (fileNames[f.fieldname] = fileNames[f.fieldname] || []).push(f.originalname);
+      // BUG TROUVE 2026-10-05 : multer/busboy decode originalname en latin1 par defaut,
+      // alors que les navigateurs envoient les noms de fichiers en UTF-8 -- un accent
+      // devient 2 caracteres errones (ex. "complément" -> "complÃ©ment", visible dans les
+      // alertes DPD). Re-decode le texte latin1 recu en UTF-8 reel.
+      const nomCorrige = Buffer.from(f.originalname, 'latin1').toString('utf8');
+      (fileNames[f.fieldname] = fileNames[f.fieldname] || []).push(nomCorrige);
     }
 
     // Mois choisi dans l'UI = source de verite si fourni (decision utilisateur 2026-08-20,

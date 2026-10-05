@@ -84,10 +84,16 @@ def col_letter(idx0):
 
 
 def read_fedex_csv(path):
-    """CSV brut FedEx (export portail, en-tete FR, separateur virgule, UTF-8 --
-    confirme sur les CSV bruts reels de juin 2026, cf. carrier Node index.js)."""
+    """CSV brut FedEx (export portail, en-tete FR ou EN, UTF-8 -- confirme sur les CSV bruts
+    reels de juin 2026, cf. carrier Node index.js). Separateur virgule ou point-virgule selon
+    l'export (BUG TROUVE 2026-09-09, cf. index.js detectDelimiter : un CSV Shipment Detail
+    anglais recu utilisait ";" -- csv.reader() par defaut sur "," aurait alors lu chaque ligne
+    comme un seul champ)."""
     with open(path, encoding="utf-8-sig", newline="") as f:
-        rows = list(csv.reader(f))
+        sample = f.readline()
+        delim = ";" if sample.count(";") > sample.count(",") else ","
+        f.seek(0)
+        rows = list(csv.reader(f, delimiter=delim))
     if not rows:
         return None
     header = [normalize_header(h) for h in rows[0]]

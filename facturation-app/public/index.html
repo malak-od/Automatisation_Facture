@@ -391,13 +391,15 @@ function renderResult(d, monthChosen) {
       ${downloads.workbook ? (d.classeurClone ? '<div class="kv" style="color:#7dd3fc">📊 Classeur = <b>copie fidèle</b> du fichier fait à la main (feuilles, formules, pivots, mise en forme)</div>' : '<div class="kv">📊 Classeur en version simplifiée (Excel non disponible)</div>') : ''}
       <div class="kv" style="margin-top:8px">✅ Enregistrés dans le dossier <b>Téléchargements\\${d.stamp}\\</b> :</div>
       <ul style="margin:6px 0 14px 20px;color:#cbd5e1;line-height:1.9">${fileItems}</ul>
-      <button class="go" onclick="reveal('${d.stamp}')">📂 Ouvrir le dossier</button>
+      <button class="go" onclick="telechargerZip('${d.stamp}')">📦 Télécharger le dossier (.zip)</button>
     </div>`;
 }
 
-async function reveal(stamp) {
-  try { await fetch('/api/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stamp }) }); }
-  catch (e) { /* dossier accessible manuellement dans Telechargements/ */ }
+// Declenche un vrai telechargement navigateur (marche a distance, contrairement a l'ancien
+// bouton "Ouvrir le dossier" qui demandait au SERVEUR d'ouvrir son propre Explorateur --
+// invisible si le logiciel est utilise via un lien, pas en local sur le poste serveur).
+function telechargerZip(stamp) {
+  window.location.href = `/api/download-zip/${encodeURIComponent(stamp)}`;
 }
 
 // Historique des generations (demande utilisateur 2026-09-02) : liste tous les runs passes
