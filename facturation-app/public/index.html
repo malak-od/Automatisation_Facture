@@ -136,9 +136,17 @@
                          padding:9px 12px; font-size:14px; min-width:160px; cursor:pointer; transition:border-color .15s ease; }
   .month-field select:hover, .month-field select:focus { border-color:var(--accent); outline:none; }
 </style>
+<link rel="stylesheet" href="/lr-planner-theme.css">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('facturation-theme')||'light';document.documentElement.dataset.sidebar=localStorage.getItem('facturation-sidebar')||'expanded'}catch(e){}</script>
 </head>
-<body>
-<header>
+<body><aside class="lr-sidebar" aria-label="Navigation principale"><div class="brand"><div><strong>Facturation</strong><small>LA RUCHE LOGISTIQUE</small></div></div>
+ <nav><button id="lr-home" type="button" title="Transporteurs" class="active"><svg class="i" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m3 10 9-7 9 7v11H3z"/><path d="M9 21v-8h6v8"/></svg><span class="lbl">Transporteurs</span></button></nav>
+ <div class="sidebar-foot"><button id="lr-theme" type="button"><svg class="i" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 14A9 9 0 0 1 10 4a9 9 0 1 0 10 10Z"/></svg><span class="lbl">Mode sombre</span></button>
+ <button id="lr-reduce" type="button" title="Réduire"><svg class="i" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg><span class="lbl">Réduire</span></button>
+ <div class="sidebar-state"><span class="status-dot"></span><div><strong>Accès réseau interne</strong><small>Facturation · v0.1.0</small></div></div>
+ <a href="https://auth.intra.laruche-logistique-france.fr/" target="_blank" rel="noopener noreferrer" title="Portail applications"><svg class="i" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span class="lbl">Portail applications</span></a></div></aside>
+ <button id="lr-backdrop" aria-label="Fermer le menu" type="button"></button>
+<header><button id="lr-open" type="button" aria-label="Ouvrir le menu" aria-expanded="false">☰</button>
   <h1 onclick="goHome()">🚚 Facturation Transporteurs</h1>
   <span class="sub">Import + classeur, automatisés</span>
   <button class="addfile" style="margin-left:auto" onclick="showHistory()">🕘 Historique des générations</button>
@@ -451,5 +459,5 @@ async function showHistory() {
 
 load();
 </script>
-</body>
+<script src="/lr-planner-menu.js"></script></body>
 </html>
