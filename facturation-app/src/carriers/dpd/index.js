@@ -290,7 +290,7 @@ async function process(files, opts) {
   for (const p of pdfs) {
     const calcule = totalGoParCompte.get(p.last4);
     if (calcule == null) {
-      warnings.push(`Facture PDF ${p.file} (client se terminant par ${p.last4}) : aucune ligne correspondante trouvee dans les fichiers DPD traites.`);
+      warnings.push(`Facture PDF ${p.file} (compte se terminant par ${p.last4}) : montant ${p.totalHt.toFixed(2)} EUR non verifie -- ce compte n'apparait dans aucun fichier "complement_facture" (CSV/XLSX) deja traite. Verifier qu'aucun fichier complement_facture CSV/XLSX n'a ete oublie pour ce mois ; sinon, ce client n'a probablement pas eu d'expedition DPD ce mois-ci et ce montant doit etre reporte manuellement.`);
       continue;
     }
     const ecart = round2(calcule - p.totalHt);
