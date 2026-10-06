@@ -205,7 +205,12 @@ app.post('/api/process', upload.any(), async (req, res) => {
           const mPoids = line.match(/^INFO_POIDS_MANQUANT:(.+)$/);
           if (mPoids) (result.infos = result.infos || []).push(`Poids introuvable dans les exports bruts : ${mPoids[1].trim()} (plancher 0,15 appliqué — à vérifier/saisir à la main)`);
           const mPays = line.match(/^AJOUT_PAYS_AUTO:(.+)$/);
-          if (mPays) (result.warnings = result.warnings || []).push(`Pays ajouté automatiquement à la table "Pays" : ${mPays[1].trim()}`);
+          // En info, pas en warning : contrairement au mode d'envoi (devine, incertain), un
+          // ajout de pays est fiable a 100% (table ISO officielle complete, jamais d'invention
+          // de code -- cf. resolve_missing_pays dans finaliser_colissimo.py), pas la peine de
+          // le faire figurer dans les points "a completer/verifier a la main" (decision
+          // utilisateur 2026-10-06).
+          if (mPays) (result.infos = result.infos || []).push(`Pays ajouté automatiquement à la table "Pays" : ${mPays[1].trim()}`);
           const mMode = line.match(/^AJOUT_MODE_ENVOI_AUTO:(.+)$/);
           if (mMode) (result.warnings = result.warnings || []).push(`Mode d'envoi déduit automatiquement (à vérifier) : ${mMode[1].trim()}`);
           const mExport = line.match(/^EXPORT_IMPORT_VALEURS:(.+)$/);
