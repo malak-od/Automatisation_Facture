@@ -218,6 +218,13 @@ async function process(files) {
   // champs metier (categorie/poidsKg/...), pas ce contrat generique -- writeWorkbook plantait
   // en tentant de lire rec.postes (undefined) sur le repli par defaut Kuehne-like.
   const recs = [];
+  // Dedup des 2 warnings ci-dessous par tracking : plusieurs "rec" (lignes de charge)
+  // partagent le meme colis (Transport/CAE/Remise/Supplements...), le warning ne doit
+  // apparaitre QU'UNE FOIS par colis, pas une fois par ligne de charge (BUG TROUVE
+  // 2026-10-06, signalement utilisateur -- un colis a 5 lignes de charge generait le
+  // meme warning mode envoi/pays 5 fois dans "21 points a verifier").
+  const trackingsSignalesModeEnvoi = new Set();
+  const trackingsSignalesPays = new Set();
   for (const l of lignes) {
     const prefixe = l.nColis.slice(0, 2);
     const paysIso = PAYS_NOM_VERS_ISO[normKey(l.paysDestination)] || '';
@@ -228,9 +235,15 @@ async function process(files) {
     // Meme regle que le warning "pays" plus bas : si ce tracking n'a QUE des lignes
     // "Droits et taxes" (charge de douane isolee), la zone/mode d'envoi n'affecte aucun
     // montant -- pas la peine de signaler "zone inconnue" (decision utilisateur 2026-08-17).
-    if (!modeEntry && trackingsAvecTransport.has(l.nColis)) warnings.push(`Colis ${l.nColis} (facture ${l.numeroFacture}) : mode envoi "${concat}" absent de "Modes envois" — zone inconnue.`);
+    if (!modeEntry && trackingsAvecTransport.has(l.nColis) && !trackingsSignalesModeEnvoi.has(l.nColis)) {
+      trackingsSignalesModeEnvoi.add(l.nColis);
+      warnings.push(`Colis ${l.nColis} (facture ${l.numeroFacture}) : mode envoi "${concat}" absent de "Modes envois" — zone inconnue.`);
+    }
 
-    if (!paysIso && l.paysDestination) warnings.push(`Colis ${l.nColis} (facture ${l.numeroFacture}) : pays "${l.paysDestination}" absent de "Pays" — "Pays à créer".`);
+    if (!paysIso && l.paysDestination && !trackingsSignalesPays.has(l.nColis)) {
+      trackingsSignalesPays.add(l.nColis);
+      warnings.push(`Colis ${l.nColis} (facture ${l.numeroFacture}) : pays "${l.paysDestination}" absent de "Pays" — "Pays à créer".`);
+    }
     // Trouve 2026-08-17 (donnees reelles de juillet 2026, colis CB533959479FR/CB534252625FR) :
     // certaines charges "Frais de douane" arrivent SANS aucune ligne "Prestations au colis"
     // correspondante dans les fichiers du mois traite (le transport a eu lieu un mois anterieur,
