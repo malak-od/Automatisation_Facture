@@ -2,7 +2,7 @@
 //  Adaptateur transporteur : MONDIAL RELAY
 //  Plusieurs fichiers CSV "Annexe_..." (1 par facture/compte). 1 ligne = 1 colis.
 //  Reclassement : Fret = Montant transport poids mesure [+ Complement si
-//  EXACTEMENT 0,03] ; Zones eloignees = Complement (sauf 0 ou 0,03) ; Zone =
+//  EXACTEMENT 0,08] ; Zones eloignees = Complement (sauf 0 ou 0,08) ; Zone =
 //  lookup Mode+Pays dans la table 'Pays' du classeur fait a la main. Le mode
 //  envoi '24RC'/'LCC' est normalise en '24R' A LA FOIS pour la cle de lookup
 //  ET pour la valeur AFFICHEE dans le fichier d'import (regle communiquee par
@@ -106,15 +106,15 @@ async function process(files) {
 
     const complement = round2(num(r[iComplement]));
     const montant = num(r[iMontantTransport]);
-    // Seuil = 0.03. ERREUR PRECEDENTE CORRIGEE (2026-08-10) : ce seuil avait ete change a tort
-    // vers 0,08 en lisant les formules Q3/T3 du 'Fichier import' du modele (qui utilisent bien
-    // 0,08) -- mais en recalculant les totaux sur les 2 seuils et en les comparant a
-    // 'Controle xls pdf'!K16/M16 (Somme de Complement/Montant du transport, valeurs de
-    // reference deja validees : 1545.20EUR / 36385.88EUR), seul 0,03 redonne ces totaux
-    // exacts. Les formules Q3/T3 du modele semblent elles-memes erronees/obsoletes (ou
-    // s'appliquer a un autre contexte) -- NE PAS s'y fier pour ce seuil, se fier au total
-    // Controle xls pdf.
-    const foldComplement = Math.abs(complement - 0.03) < 0.001;
+    // Seuil = 0.08. Historique : fixe a 0,03 jusqu'au 2026-08-10 (seul seuil qui redonnait
+    // alors les totaux de reference 'Controle xls pdf'!K16/M16). Decision utilisateur
+    // 2026-09-07 : repasse a 0,08 (le seuil que les formules Q3/T3 du 'Fichier import' du
+    // modele utilisent reellement, cf. automatisation/finaliser_mondial_relay.py) -- une
+    // divergence avec l'ancien total de controle est attendue depuis, ce n'est pas un bug a
+    // reprendre. Ce fichier (carrier JS, produit le CSV import) n'avait jamais ete aligne sur
+    // ce changement -- trouve et corrige le 2026-10-06 suite a un signalement utilisateur
+    // (colonne Zones eloignees du CSV contenait encore des 0,08).
+    const foldComplement = Math.abs(complement - 0.08) < 0.001;
     const fret = round2(foldComplement ? montant + complement : montant);
     const zonesEloignees = (complement === 0 || foldComplement) ? 0 : complement;
     const gazoleLigne = num(r[iGazole]);
@@ -260,7 +260,7 @@ module.exports = {
   name: 'Mondial Relay',
   status: 'ready',
   taxeGasoil: "Reelle (indexation gasoil par ligne) mais geree hors fichier d'import, cote ERP -- 'identique au mois precedent' selon le process",
-  method: "Fichiers Annexe_*.csv (1 par facture, dossier). Fret = Montant transport poids mesure (+Complement si =0,03 pile) ; Zones eloignees = Complement sinon. Zone = Mode+Pays via la table de correspondance du classeur (24RC/LCC normalises pour ce lookup uniquement, mode envoi affiche reste brut). Facture 'France' (LARUCH) : ecart normal avec le PDF = montant de collecte non facture aux clients, a ajouter manuellement au controle.",
+  method: "Fichiers Annexe_*.csv (1 par facture, dossier). Fret = Montant transport poids mesure (+Complement si =0,08 pile) ; Zones eloignees = Complement sinon. Zone = Mode+Pays via la table de correspondance du classeur (24RC/LCC normalises pour ce lookup uniquement, mode envoi affiche reste brut). Facture 'France' (LARUCH) : ecart normal avec le PDF = montant de collecte non facture aux clients, a ajouter manuellement au controle.",
   inputs: [
     { key: 'csv', label: 'Fichiers Mondial Relay (dossier Annexe_*.csv)', accept: '.csv', multiple: true, required: true },
     { key: 'pdf', label: 'Facture(s) PDF Mondial Relay (contrôle du total par facture)', accept: '.pdf', multiple: true, required: false },
