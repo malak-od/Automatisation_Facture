@@ -444,6 +444,23 @@ def main():
     # Filtrage "Droits & Taxes" (seule regle certaine, cf. docstring index.js) : une facture
     # dont TOUTES les lignes ont un fret nul et une taxe non nulle est un ajustement
     # douanier pur -- exclue de Shipment Detail.
+    # BUG TROUVE 2026-10-12 (CSV reel de septembre, 2955 lignes) : float() plantait avec
+    # "could not convert string to float: 'EUR'" -- ces colonnes "Devise de facturation ..."
+    # contiennent normalement un MONTANT malgre leur nom trompeur (cf. commentaire plus haut,
+    # confirme sur plusieurs mois reels), mais au moins 1 ligne de ce fichier porte bien un
+    # vrai code devise litteral ("EUR") a cet emplacement -- cas limite non rencontre avant.
+    # Fix defensif : une valeur non convertible est traitee comme 0 (comme une case vide)
+    # plutot que de faire planter tout le traitement, avec un avertissement pour rester visible.
+    n_taxe_invalide = 0
+    def montant_sur(r, idx):
+        nonlocal n_taxe_invalide
+        if idx is None or r[idx] in (None, ""):
+            return 0.0
+        try:
+            return float(str(r[idx]).replace(",", "."))
+        except ValueError:
+            n_taxe_invalide += 1
+            return 0.0
     factures_fret = {}
     factures_taxe = {}
     if i_invoice_num is not None:
@@ -451,10 +468,12 @@ def main():
             nf = str(r[i_invoice_num] or "").strip()
             if not nf:
                 continue
-            fret = float(str(r[i_fret]).replace(",", ".")) if i_fret is not None and r[i_fret] not in (None, "") else 0.0
-            taxe = float(str(r[i_taxe]).replace(",", ".")) if i_taxe is not None and r[i_taxe] not in (None, "") else 0.0
+            fret = montant_sur(r, i_fret)
+            taxe = montant_sur(r, i_taxe)
             factures_fret[nf] = factures_fret.get(nf, 0.0) + fret
             factures_taxe[nf] = factures_taxe.get(nf, 0.0) + taxe
+    if n_taxe_invalide:
+        print(f"AVERTISSEMENT: {n_taxe_invalide} valeur(s) non numérique(s) rencontrée(s) dans les colonnes Frêt/Taxe (ex. \"EUR\" au lieu d'un montant) -- traitée(s) comme 0, à vérifier sur le CSV source.")
     factures_droits_taxes = {nf for nf in factures_fret if factures_fret[nf] == 0 and factures_taxe.get(nf, 0) != 0}
     if factures_droits_taxes and i_invoice_num is not None:
         avant = len(rows)
