@@ -180,6 +180,15 @@ app.post('/api/process', upload.any(), async (req, res) => {
     // Rempli si le finaliseur a exporte les valeurs calculees de son onglet Import (cf.
     // carrier.importFromWorkbook ci-dessous) -- reste null pour tous les autres carriers.
     let importValuesCsvPath = null;
+    // BUG TROUVE 2026-10-12 (BLS, alertes POIDS/COLIS=0 dedoublees avec des numeros de ligne
+    // incoherents) : la concatenation plus bas (result.alerts = [...result.alerts, ...nouvelles
+    // alertes validate()]) ajoutee le 2026-10-07 pour UPS re-concatenait aussi les alertes
+    // DEJA posees par validate() cote carrier JS (ex. bls/index.js, qui appelle validate() lui-
+    // meme) -- mElangeait donc les anciennes ET les nouvelles alertes "COLIS/POIDS=0" pour TOUS
+    // les transporteurs passant par ce chemin, pas seulement UPS. Fix : ne garder a part QUE les
+    // alertes ACTION_MANUELLE_REQUISE du finaliseur Python (qui ne viennent jamais de
+    // validate() et ne seraient sinon jamais recalculees), jamais le reste de result.alerts.
+    const finalizerAlerts = [];
     if (carrier.noWorkbook) {
       workbookMode = 'none';
     } else if (result.prebuiltWorkbookPath && fs.existsSync(result.prebuiltWorkbookPath)) {
@@ -220,7 +229,7 @@ app.post('/api/process', upload.any(), async (req, res) => {
           // dans "Fichier import" (finaliser_ups.py l'exempte de la purge "sans aucune charge
           // facturable") et une alerte explicite demande une action manuelle.
           const mActionManuelle = line.match(/^ACTION_MANUELLE_REQUISE:(.+)$/);
-          if (mActionManuelle) (result.alerts = result.alerts || []).push(mActionManuelle[1].trim());
+          if (mActionManuelle) finalizerAlerts.push(mActionManuelle[1].trim());
         }
       } catch (e) {
         // BUG TROUVE 2026-10-08 (FedEx, traceback Python toujours tronque juste avant le
@@ -306,8 +315,10 @@ app.post('/api/process', upload.any(), async (req, res) => {
         // BUG TROUVE 2026-10-07 (UPS, "code inconnu") : cet ecrasement effacait aussi les
         // alertes ACTION_MANUELLE_REQUISE deja poussees par le finaliseur Python juste au-
         // dessus (ex. charge a categorie ERP non reconnue) -- elles ne viennent pas de
-        // validate() et ne seraient jamais recalculees. Les conserve en les concatenant.
-        result.alerts = [...(result.alerts || []), ...validate(finalRows, { skipPoidsDecimal: !!carrier.skipPoidsDecimal }).alerts];
+        // validate() et ne seraient jamais recalculees. Les conserve via finalizerAlerts
+        // (PAS result.alerts -- cf. 2026-10-12 plus haut, result.alerts peut deja contenir
+        // les anciennes alertes validate() du carrier JS, qui seraient sinon dupliquees).
+        result.alerts = [...finalizerAlerts, ...validate(finalRows, { skipPoidsDecimal: !!carrier.skipPoidsDecimal }).alerts];
         totaux = sumPostesRows(finalRows);
       }
     }
