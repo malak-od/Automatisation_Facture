@@ -424,12 +424,34 @@ def main():
     # index.js (carrier Node) -- compare TOUS les trackings du PDF a TOUS les trackings du CSV
     # brut (avant tout filtrage Droits&Taxes/sans PDF).
     if i_tracking is not None:
+        import datetime as _dt
         csv_trackings = {str(r[i_tracking] or "").strip() for r in rows if r[i_tracking]}
         for p in pdf_infos_precoce:
             manquants = [b for b in p.get("bordereaux", []) if b["tracking"] not in csv_trackings]
             if manquants:
                 total_manquant = round(sum(b["sous_total"] for b in manquants), 2)
-                detail = ", ".join(f"{b['tracking']} (envoi du {b['date_envoi']}, {b['sous_total']:.2f} EUR)" for b in manquants)
+                # BUG TROUVE 2026-10-12 (signalement utilisateur, "alertes PDF illisibles") :
+                # le detail listait TOUS les bordereaux manquants sans limite (jusqu'a 71 sur
+                # un cas reel), chacun avec date+montant -- une phrase geante, illisible a
+                # l'ecran. Reecrit en resume compact (nombre, plage de dates, total) +
+                # echantillon limite a 5 trackings -- meme principe d'echantillonnage que
+                # carriers/fedex/index.js (deja applique le 2026-09-09 pour la meme raison,
+                # jamais porte ici cote Python), juste plus court (5 au lieu de 20, le detail
+                # complet par tracking etant deja moins utile qu'un resume clair).
+                dates = []
+                for b in manquants:
+                    try:
+                        dates.append(_dt.datetime.strptime(b["date_envoi"], "%d/%m/%Y"))
+                    except (ValueError, TypeError):
+                        pass
+                dates.sort()
+                if dates:
+                    d_min, d_max = dates[0].strftime("%d/%m"), dates[-1].strftime("%d/%m")
+                    plage = f"du {d_min} au {d_max}" if d_min != d_max else f"le {d_min}"
+                else:
+                    plage = "date inconnue"
+                echantillon = ", ".join(b["tracking"] for b in manquants[:5])
+                suite = f" (+{len(manquants) - 5} autre(s))" if len(manquants) > 5 else ""
                 # BUG TROUVE 2026-08-20 : le caractere '~' (approximation) etait a l'origine
                 # U+2248 ("≈") -- absent du charset cp1252 utilise par la console Windows lors
                 # de l'appel subprocess depuis server.js, provoquant un UnicodeEncodeError SUR
@@ -438,8 +460,8 @@ def main():
                 # of undefined (reading 'Droits et taxes')"), exactement le meme piege que le
                 # bug PermissionError/EBUSY deja documente sur TNT.
                 print(f"AVERTISSEMENT: PDF {p['file']}" + (f" (n° {p['numero_facture']})" if p['numero_facture'] else "")
-                      + f" : {len(manquants)} bordereau(x) facturé(s) par FedEx mais absent(s) du CSV Shipment Detail — {detail}"
-                      + f" — total HT manquant ~ {total_manquant:.2f} EUR (probable envoi d'un mois antérieur jamais reporté, à vérifier avec le pôle transport).")
+                      + f" : {len(manquants)} bordereau(x) facturé(s) par FedEx, absent(s) du CSV Shipment Detail, envoyé(s) {plage}, total ~{total_manquant:.2f} EUR"
+                      + f" — ex. {echantillon}{suite} — probable envoi d'un mois antérieur jamais reporté, à vérifier avec le pôle transport.")
 
     # Filtrage "Droits & Taxes" (seule regle certaine, cf. docstring index.js) : une facture
     # dont TOUTES les lignes ont un fret nul et une taxe non nulle est un ajustement

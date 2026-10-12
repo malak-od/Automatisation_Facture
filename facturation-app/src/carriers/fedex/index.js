@@ -142,6 +142,17 @@ function parseDateUs(s) {
   return { y: Number(m[3]), m: Number(m[1]), d: Number(m[2]) };
 }
 
+/** Date "jj/mm/aaaa" -> Date JS (format des bordereaux PDF, "date_envoi" -- different du CSV
+ * qui lui est en US, cf. parseDateUs). Retourne null si invalide plutot que de planter --
+ * meme precaution que les autres conversions de ce fichier (jamais faire confiance a 100% au
+ * texte extrait d'un PDF). */
+function parseDateFr(s) {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(s || '').trim());
+  if (!m) return null;
+  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 /** PDF FedEx (facture "Facture de frais de transport") : bloc labels/valeurs colle par
  * pdf-parse ("No de Client:\nNo de Facture:\n...\nMontant du\n*****1234\n634323394\n...368,95
  * EUR") + ligne "Total dû EUR <montant>" (recapitulatif final, redondant avec "Montant du" mais
@@ -333,13 +344,25 @@ async function process(files, opts) {
       const totalManquant = round2(manquants.reduce((s, b) => s + (b.sousTotal || 0), 0));
       // BUG TROUVE 2026-09-09 (remontee pole transport, "pas clair a l'ecran") : le detail
       // listait TOUS les trackings manquants sans limite (jusqu'a 417 sur un cas reel) --
-      // illisible dans l'UI (un seul <div>, cf. public/index.html). Echantillon des 20
-      // premiers + total (nombre/montant deja donnes en tete de phrase, jamais perdus) --
-      // meme principe que l'echantillonnage deja utilise cote Python (finaliser_ups.py,
-      // "echantillon = ...[:20]").
-      const echantillon = manquants.slice(0, 20).map((b) => `${b.tracking} (envoi du ${b.dateEnvoi}, ${b.sousTotal.toFixed(2)} EUR)`).join(', ');
-      const suite = manquants.length > 20 ? ` … et ${manquants.length - 20} autre(s)` : '';
-      warnings.push(`PDF ${p.file}${p.numeroFacture ? ` (n° ${p.numeroFacture})` : ''} : ${manquants.length} bordereau(x) facturé(s) par FedEx mais absent(s) du CSV Shipment Detail — ${echantillon}${suite} — total HT manquant ≈ ${totalManquant.toFixed(2)} EUR (probable envoi d'un mois antérieur jamais reporté, à vérifier avec le pôle transport).`);
+      // illisible dans l'UI (un seul <div>, cf. public/index.html). Echantillon limite +
+      // total (nombre/montant deja donnes en tete de phrase, jamais perdus).
+      // BUG TROUVE 2026-10-12 (signalement utilisateur, meme alerte toujours "illisible"
+      // malgre l'echantillon a 20) : chaque tracking de l'echantillon portait encore sa
+      // propre date+montant repetes -- remplace par un resume compact en tete (plage de
+      // dates) + juste les numeros de tracking en echantillon (5 au lieu de 20, le detail
+      // date/montant par ligne etant deja moins utile qu'un resume clair), meme format que
+      // finaliser_fedex.py (portee ici pour rester coherent entre les 2 implementations).
+      const datesValides = manquants.map((b) => parseDateFr(b.dateEnvoi)).filter(Boolean).sort((a, b2) => a - b2);
+      let plage = 'date inconnue';
+      if (datesValides.length) {
+        const fmt = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+        const dMin = fmt(datesValides[0]);
+        const dMax = fmt(datesValides[datesValides.length - 1]);
+        plage = dMin === dMax ? `le ${dMin}` : `du ${dMin} au ${dMax}`;
+      }
+      const echantillon = manquants.slice(0, 5).map((b) => b.tracking).join(', ');
+      const suite = manquants.length > 5 ? ` (+${manquants.length - 5} autre(s))` : '';
+      warnings.push(`PDF ${p.file}${p.numeroFacture ? ` (n° ${p.numeroFacture})` : ''} : ${manquants.length} bordereau(x) facturé(s) par FedEx, absent(s) du CSV Shipment Detail, envoyé(s) ${plage}, total ~${totalManquant.toFixed(2)} EUR — ex. ${echantillon}${suite} — probable envoi d'un mois antérieur jamais reporté, à vérifier avec le pôle transport.`);
     }
   }
 
