@@ -215,9 +215,26 @@ app.post('/api/process', upload.any(), async (req, res) => {
           if (mMode) (result.warnings = result.warnings || []).push(`Mode d'envoi déduit automatiquement (à vérifier) : ${mMode[1].trim()}`);
           const mExport = line.match(/^EXPORT_IMPORT_VALEURS:(.+)$/);
           if (mExport) importValuesCsvPath = mExport[1].trim();
+          // UPS : charge a "code inconnu" (categorie ERP non reconnue) -- decision
+          // utilisateur 2026-10-07 : ne jamais deviner la categorie, la ligne reste visible
+          // dans "Fichier import" (finaliser_ups.py l'exempte de la purge "sans aucune charge
+          // facturable") et une alerte explicite demande une action manuelle.
+          const mActionManuelle = line.match(/^ACTION_MANUELLE_REQUISE:(.+)$/);
+          if (mActionManuelle) (result.alerts = result.alerts || []).push(mActionManuelle[1].trim());
         }
       } catch (e) {
-        console.warn('Finaliseur Excel KO :', String(e.stderr || e.message || '').slice(0, 300));
+        // BUG TROUVE 2026-10-08 (FedEx, traceback Python toujours tronque juste avant le
+        // message d'exception reel) : .slice(0, 300) coupait le message AVANT la ligne
+        // "TypeError: ..."/"pywintypes.com_error: ..." elle-meme (le traceback Python
+        // multi-lignes -- chemins de fichiers + "File ... in main" -- depasse deja 300
+        // caracteres a lui seul). Jamais un probleme de generation COM/Excel : purement ce
+        // log tronque qui cachait l'information utile. Relleve a 3000 caracteres (assez pour
+        // un traceback complet sans noyer la console en cas de CSV/erreur geante).
+        console.warn('Finaliseur Excel KO :', String(e.stderr || e.message || '').slice(0, 3000));
+        // e.stdout : les print() Python (diagnostics, "Entrée : N lignes x M colonnes"...)
+        // emis AVANT le crash -- jamais logges jusqu'ici en cas d'echec (seul le succes les
+        // lisait, cf. boucle plus haut), alors qu'ils sont deja captures par execFileAsync.
+        if (e.stdout) console.warn('Sortie console avant l\'échec :', String(e.stdout).slice(0, 3000));
         const explained = explainFileError(e, wbPath);
         // Fichier verrouille : le repli exceljs echouerait pareil sur le meme chemin, inutile d'essayer.
         if (workbookOnly || explained !== e) throw explained;
@@ -286,7 +303,11 @@ app.post('/api/process', upload.any(), async (req, res) => {
         // legitimement precis, pas la regle ARRONDI.SUP a 1 decimale des autres transporteurs)
         // -- la 1ere passe faite cote carrier avec ce flag etait donc invisible, l'alerte
         // "POIDS X a plus d'1 decimale" revenait en masse (446 lignes constatees sur Delivengo).
-        result.alerts = validate(finalRows, { skipPoidsDecimal: !!carrier.skipPoidsDecimal }).alerts;
+        // BUG TROUVE 2026-10-07 (UPS, "code inconnu") : cet ecrasement effacait aussi les
+        // alertes ACTION_MANUELLE_REQUISE deja poussees par le finaliseur Python juste au-
+        // dessus (ex. charge a categorie ERP non reconnue) -- elles ne viennent pas de
+        // validate() et ne seraient jamais recalculees. Les conserve en les concatenant.
+        result.alerts = [...(result.alerts || []), ...validate(finalRows, { skipPoidsDecimal: !!carrier.skipPoidsDecimal }).alerts];
         totaux = sumPostesRows(finalRows);
       }
     }

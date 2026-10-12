@@ -189,14 +189,16 @@ function extractSupplements(text) {
   let m;
   while ((m = trackPat.exec(text)) !== null) starts.push({ idx: m.index, tracking: m[3] });
   const kwPats = {
-    // Zones eloignees : mot-cle generique "zone" (insensible a la casse, demande pole
-    // transport 2026-08-24) + libelle precis "Frais de traitement des importations aux
-    // Etats-Unis" (precise par le pole transport 2026-08-25 -- ne contient pas "zone", donc
-    // pas capte par le 1er pattern, doit rester en complement). BUG TROUVE 2026-08-25 (verifie
+    // Zones eloignees : libelle precis "Frais de traitement des importations aux
+    // Etats-Unis" (precise par le pole transport 2026-08-25). BUG TROUVE 2026-08-25 (verifie
     // sur bordereaux reels 382198649394/382408298943, PDF FEDEX_634373761_781542172.pdf) : le
     // PDF tronque le libelle a "...aux États-Uni" (SANS le "s" final) -- "s" rendu optionnel.
+    // BUG TROUVE 2026-10-12 (equivalent cote finaliser_fedex.py, meme signalement
+    // utilisateur) : le mot-cle generique "zone" matchait a tort l'adresse expediteur
+    // ("21320 CREANCEY") suivie d'un nom de zone commerciale/industrielle du destinataire --
+    // aucune surtaxe reelle, juste une coincidence d'adresse. Retire la regle generique --
+    // garde uniquement le libelle precis ci-dessous, jamais de faux positif constate.
     ZonesEloignees: [
-      /([\d.,]+)\s*\n[^\n]{0,60}\n?[^\n]*zone[^\n]*/i,
       /([\d.,]+)\s*\n[^\n]{0,60}\n?Frais de traitement des importations aux [ÉE]tats-Unis?/i,
     ],
     // Colis volumineux (PDF) : "Charge pour dépassement de dimension" + "Supplément pour
@@ -557,9 +559,16 @@ async function process(files, opts) {
 
 /** Args du finaliseur (csv + brut du mois/mois-1 + pdf) -- meme pattern que Delivengo
  * (computeFinalizerArgs), le finaliseur Python recalcule lui-meme E/P via l'export WMS
- * plutot que de dependre d'un CSV intermediaire (cf. finaliser_fedex.py). */
-function computeFinalizerArgs(files) {
-  return ['--csv', ...(files.csv || []), '--brut', ...(files.brut || []), '--pdf', ...(files.pdf || [])];
+ * plutot que de dependre d'un CSV intermediaire (cf. finaliser_fedex.py).
+ * BUG TROUVE 2026-10-12 (signalement utilisateur : "Date validité tarif" figée au mois
+ * precedent) : --period n'etait jamais transmis au finaliseur -- un CSV Shipment Detail peut
+ * melanger plusieurs mois de facturation (verifie sur un cas reel : aout/septembre/octobre
+ * dans le MEME export "de septembre"), le mois MAJORITAIRE calcule en repli n'est alors pas
+ * forcement le mois CIBLE choisi par l'utilisateur. Meme fix deja applique a UPS
+ * (carriers/ups/index.js, 2026-08-26) -- transmet desormais le --period choisi dans le
+ * formulaire, prioritaire sur le calcul par majorite cote Python. */
+function computeFinalizerArgs(files, period) {
+  return ['--csv', ...(files.csv || []), '--brut', ...(files.brut || []), '--pdf', ...(files.pdf || []), ...(period ? ['--period', period] : [])];
 }
 
 module.exports = {
@@ -581,7 +590,7 @@ module.exports = {
   finalizer: {
     script: '../automatisation/finaliser_fedex.py',
     template: '../Transporteurs/Fedex/2026_06_Facture Fedex.xlsx',
-    buildArgs: (files) => computeFinalizerArgs(files),
+    buildArgs: (files, period) => computeFinalizerArgs(files, period),
   },
   process,
 };

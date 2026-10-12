@@ -83,17 +83,86 @@ def col_letter(idx0):
     return openpyxl.utils.get_column_letter(idx0 + 1)
 
 
+def detect_delimiter_fedex(first_line):
+    """Reprend detectDelimiter de carriers/fedex/index.js (compte , et ; HORS zones entre
+    guillemets sur la 1ere ligne) -- plus robuste que l'ancien sample.count(';') > count(',')
+    (celui-ci se trompait si un champ entre guillemets contenait lui-meme le delimiteur)."""
+    commas = semicolons = 0
+    in_quotes = False
+    for c in first_line:
+        if c == '"':
+            in_quotes = not in_quotes
+        elif not in_quotes and c == ",":
+            commas += 1
+        elif not in_quotes and c == ";":
+            semicolons += 1
+    return ";" if semicolons > commas else ","
+
+
 def read_fedex_csv(path):
     """CSV brut FedEx (export portail, en-tete FR ou EN, UTF-8 -- confirme sur les CSV bruts
     reels de juin 2026, cf. carrier Node index.js). Separateur virgule ou point-virgule selon
     l'export (BUG TROUVE 2026-09-09, cf. index.js detectDelimiter : un CSV Shipment Detail
     anglais recu utilisait ";" -- csv.reader() par defaut sur "," aurait alors lu chaque ligne
-    comme un seul champ)."""
-    with open(path, encoding="utf-8-sig", newline="") as f:
-        sample = f.readline()
-        delim = ";" if sample.count(";") > sample.count(",") else ","
-        f.seek(0)
-        rows = list(csv.reader(f, delimiter=delim))
+    comme un seul champ).
+    BUG TROUVE 2026-10-08 (classeur fige en plein Excel COM, access violation combase.dll
+    pendant l'ecriture bulk Shipment Detail!Value=data_brut) : ce parseur utilisait le
+    csv.reader() standard de Python, qui applique les regles CSV STRICTES (un guillemet
+    fermant DOIT etre suivi d'un delimiteur/fin de ligne) -- le fix du 2026-09-09 (champs mal
+    echappes par FedEx, cf. index.js) n'avait ete porte QUE cote JS (carrier Node), jamais ici.
+    Sur un CSV reel avec un guillemet interne isole (ex. "\".OK", "9."-3COUR), csv.reader()
+    fermait le champ a tort, desequilibrant TOUT LE RESTE DU FICHIER -> plusieurs lignes
+    fusionnees en un seul champ geant (potentiellement >32767 caracteres, la limite d'une
+    cellule Excel) -- ecrire CA en bulk via COM a fait planter Excel (combase.dll, 0xc0000005)
+    plutot que de lever une exception Python normale (explique le traceback tronque, sans
+    message : le crash n'est pas une exception Python standard). Remplace par un PORT FIDELE,
+    caractere par caractere, de readFedexCsv (index.js) -- meme tolerance sur les guillemets
+    isoles (un vrai guillemet fermant est TOUJOURS suivi d'un delimiteur/\\r/\\n/fin de texte,
+    sinon il reste dans le texte du champ), meme detection de delimiteur hors guillemets."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    text = raw.decode("utf-8-sig")
+    first_line = text.split("\n", 1)[0].rstrip("\r")
+    delim = detect_delimiter_fedex(first_line)
+    rows = []
+    row = []
+    field = []
+    in_quotes = False
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if in_quotes:
+            if c == '"':
+                if i + 1 < n and text[i + 1] == '"':
+                    field.append('"')
+                    i += 2
+                    continue
+                nxt = text[i + 1] if i + 1 < n else None
+                if nxt in (delim, "\r", "\n", None):
+                    in_quotes = False
+                else:
+                    field.append(c)
+            else:
+                field.append(c)
+        elif c == '"':
+            in_quotes = True
+        elif c == delim:
+            row.append("".join(field))
+            field = []
+        elif c == "\r":
+            pass
+        elif c == "\n":
+            row.append("".join(field))
+            rows.append(row)
+            row = []
+            field = []
+        else:
+            field.append(c)
+        i += 1
+    if field or row:
+        row.append("".join(field))
+        rows.append(row)
     if not rows:
         return None
     header = [normalize_header(h) for h in rows[0]]
@@ -113,6 +182,22 @@ def coerce(v):
         return float(s.replace(",", "."))
     if re.fullmatch(r"-?\d+\.\d+", s):
         return float(s)
+    # BUG TROUVE 2026-10-08 (CSV reel de septembre, ligne 1075, colonne "Reference Notes Line
+    # 1" = "=.!+23" -- note de reference libre saisie par un client FedEx) : une chaine ecrite
+    # via COM .Value= qui commence par "=" declenche TOUJOURS le parseur de formule Excel
+    # (jamais traitee comme texte litteral) -- si ce qui suit n'est PAS une formule valide
+    # (ici ".!+23"), Excel renvoie une exception COM generique ("Une exception s'est
+    # produite", AUCUN rapport reel avec une penurie de memoire malgre les apparences du code
+    # d'erreur). Reproduit et confirme isolement (ws.Cells(...).Value = "=.!+23" plante seul,
+    # sans rapport avec la taille du fichier -- testes aussi "+"/"-"/"@": ceux-ci n'ont PAS ce
+    # risque, Excel les accepte toujours tels quels, donc pas touches ici pour eviter de
+    # changer un comportement existant non casse, ex. "+33...": deja converti en nombre). Fix
+    # standard Excel : un guillemet simple en tete FORCE le texte litteral (equivalent de
+    # taper '=.!+23 au clavier) -- invisible a la lecture (.Value relit la chaine originale
+    # sans l'apostrophe), applique ICI pour couvrir tous les points d'ecriture .Value=/
+    # .Formula= de ce finaliseur qui passent par coerce().
+    if s[:1] == "=":
+        return "'" + v
     return v
 
 
@@ -177,13 +262,21 @@ def extract_pdf_infos(pdf_paths):
     # 2026-08-20 -- 2 mecanismes independants, pas un remplacement.
     pat_track_start = re.compile(r"\d{2}/\d{2}/\d{4}(\d{9,15})")
     kw_pats = {
-        # Zones eloignees : mot-cle generique "zone" (insensible a la casse, pole transport
-        # 2026-08-24) + libelle precis "Frais de traitement des importations aux Etats-Unis"
-        # (precise par le pole transport 2026-08-25 -- ne contient pas "zone", pattern
-        # complementaire), cf. carrier Node index.js (meme changement). BUG TROUVE 2026-08-25 :
-        # le PDF tronque le libelle a "...aux Etats-Uni" (SANS le "s" final) -- "s" optionnel.
+        # Zones eloignees : libelle precis "Frais de traitement des importations aux
+        # Etats-Unis" (precise par le pole transport 2026-08-25), cf. carrier Node index.js
+        # (meme changement). BUG TROUVE 2026-08-25 : le PDF tronque le libelle a "...aux
+        # Etats-Uni" (SANS le "s" final) -- "s" optionnel.
+        # BUG TROUVE 2026-10-12 (signalement utilisateur, trackings 876739026110/876869350243/
+        # 876993993158/877001078783/877072324270 : "Zone eloignee" = 21320EUR, notre PROPRE
+        # code postal expediteur, 21320 Creancey) : le mot-cle generique "zone" (insensible a
+        # la casse, 0-60 caracteres apres n'importe quel nombre) matchait a tort "21320
+        # CREANCEY ZONE <nom de zone commerciale/industrielle du destinataire>" -- aucune
+        # surtaxe reelle, juste l'adresse expediteur suivie d'un nom de zone d'activite cote
+        # destinataire. Confirme : sur tous les PDF de test reels, CHAQUE occurrence de
+        # "zone" est un faux positif de ce type (ou le libelle generique "Livraison hors
+        # zone", lui aussi sans rapport avec une surtaxe dediee). Retire la regle generique --
+        # garde uniquement le libelle precis ci-dessous, jamais de faux positif constate.
         "ZonesEloignees": [
-            re.compile(r"([\d.,]+)[^\n]{0,60}zone", re.IGNORECASE),
             re.compile(r"([\d.,]+)[^\n]{0,60}Frais de traitement des importations aux [ÉE]tats-Unis?", re.IGNORECASE),
         ],
         # Colis volumineux (PDF) : "Charge pour dépassement de dimension" + "Supplément pour
@@ -232,22 +325,31 @@ def extract_pdf_infos(pdf_paths):
 
 
 def parse_args(argv):
+    """--csv <csv...> [--brut <xlsx...>] [--pdf <pdf...>] [--period AAAA_MM]"""
     modele, sortie = argv[1], argv[2]
     csvs, brut, pdfs, cur = [], [], [], None
-    for a in argv[3:]:
+    period = None
+    i = 3
+    while i < len(argv):
+        a = argv[i]
         if a == "--csv":
             cur = "c"
         elif a == "--brut":
             cur = "b"
         elif a == "--pdf":
             cur = "p"
+        elif a == "--period":
+            i += 1
+            period = argv[i] if i < len(argv) else None
+            cur = None
         elif cur == "c":
             csvs.append(a)
         elif cur == "b":
             brut.append(a)
         elif cur == "p":
             pdfs.append(a)
-    return modele, sortie, csvs, brut, pdfs
+        i += 1
+    return modele, sortie, csvs, brut, pdfs, period
 
 
 def retry(fn, tries=8, delay=0.6):
@@ -263,7 +365,7 @@ def retry(fn, tries=8, delay=0.6):
 
 
 def main():
-    modele, sortie, csv_paths, brut_paths, pdf_paths = parse_args(sys.argv)
+    modele, sortie, csv_paths, brut_paths, pdf_paths, period = parse_args(sys.argv)
     if not csv_paths:
         raise RuntimeError("Aucun CSV fourni (--csv <shipment_detail.csv> [...]).")
     shutil.copyfile(modele, sortie)  # on ne touche JAMAIS au modele
@@ -378,11 +480,28 @@ def main():
             print(f"Facture(s) absente(s) des PDF portail fournis (probablement deja facturee(s) un mois precedent) exclue(s) : {sorted(factures_sans_pdf)} ({avant - len(rows)} ligne(s)) -- a confirmer avec le pole transport.")
             n = len(rows)
 
-    # Mois cible = mois majoritaire (meme piege que Chronopost/TNT).
+    # Mois cible = choix utilisateur (--period, source de verite -- meme pattern que
+    # finaliser_ups.py, BUG TROUVE 2026-08-26 sur UPS : "--period n'etait jamais transmis au
+    # finaliseur, Date validite tarif restait calculee par majorite, peu fiable"). Repli sur le
+    # mois majoritaire si absent.
+    # BUG TROUVE 2026-10-12 (signalement utilisateur, FedEx : "Date validite tarif" figee au
+    # 01/08 au lieu du 01/09 attendu) : le CSV Shipment Detail "de septembre" contenait en
+    # realite 3 mois de facturation melanges (verifie sur le vrai fichier : 2962 lignes aout,
+    # 2376 lignes septembre, 696 lignes octobre) -- le mois MAJORITAIRE (aout, le plus de
+    # lignes) n'est pas forcement le mois CIBLE choisi par l'utilisateur au moment de
+    # l'upload. Le carrier Node (index.js, computeFinalizerArgs) ne transmettait jamais le
+    # --period choisi dans le formulaire -- corrige en parallele, meme fix que UPS.
+    import datetime as _dt
+    from collections import Counter
+    EXCEL_EPOCH = _dt.datetime(1899, 12, 30)
     date_validite_serial = None
-    if i_mois is not None or i_invoice_date is not None:
-        import datetime as _dt
-        from collections import Counter
+    mois_cible = None
+    if period:
+        m = re.fullmatch(r"(\d{4})_(\d{2})", period)
+        if m:
+            mois_cible = f"{m.group(1)}{m.group(2)}"
+            date_validite_serial = (_dt.datetime(int(m.group(1)), int(m.group(2)), 1) - EXCEL_EPOCH).days
+    if mois_cible is None and (i_mois is not None or i_invoice_date is not None):
         compte = Counter()
         for r in rows:
             v = str(r[i_mois] or "").strip() if i_mois is not None else ""
@@ -395,7 +514,6 @@ def main():
         if compte:
             mois_maj = compte.most_common(1)[0][0]
             annee, mois = int(mois_maj[:4]), int(mois_maj[4:6])
-            EXCEL_EPOCH = _dt.datetime(1899, 12, 30)
             date_validite_serial = (_dt.datetime(annee, mois, 1) - EXCEL_EPOCH).days
 
     # E/P : export WMS "expeditions_brut" m/m-1 -- repli "particulier" si tracking absent
@@ -416,6 +534,35 @@ def main():
         print(f"{n_ep_defaut} ligne(s) sans correspondance dans l'export WMS (E/P) — classée(s) 'particulier' par défaut.")
 
     data_brut = [[coerce(v) for v in r] for r in rows]
+    # BUG TROUVE 2026-10-12 (signalement utilisateur : tous les trackings finissent par ".0"
+    # dans le CSV livre) : coerce() convertit tout champ purement numerique en float -- correct
+    # pour un montant, mais le "Numero de suivi" FedEx est un IDENTIFIANT (confirme "TOUJOURS
+    # numerique ... jamais de zero de tete" plus bas), jamais une quantite. DEUX conversions
+    # en nombre s'enchainent : (1) coerce() cote Python, (2) Excel lui-meme reconvertit une
+    # chaine purement numerique en nombre a l'ecriture .Value= (verifie : ecrire "876739026110"
+    # en texte Python donne malgre tout un float cote Excel). Un seul fix cote Python (sans
+    # toucher coerce(), qui reste correct pour les vrais montants) ne suffit donc pas -- fix
+    # retenu : prefixe d'une APOSTROPHE (convention Excel standard "force texte", confirmee
+    # invisible a la lecture .Value), applique ICI (apres coerce(), donc jamais recoerce) sur
+    # la SEULE colonne tracking (demande explicite : pas de changement sur les autres champs
+    # numeriques non signales, ex. montants/poids qui doivent rester des nombres).
+    if i_tracking is not None:
+        for ri, r in enumerate(data_brut):
+            raw = rows[ri][i_tracking]
+            data_brut[ri][i_tracking] = ("'" + str(raw).strip()) if raw not in (None, "") else None
+    # Garde-fou (2026-10-08) : une cellule Excel accepte au plus 32767 caracteres -- un champ
+    # plus long (ex. un cas de corruption CSV non encore rencontre, meme categorie que le bug
+    # de parsing corrige plus haut) ferait planter Excel (COM access violation) a l'ecriture
+    # bulk ci-dessous, AVANT toute exception Python lisible. Tronque defensivement (valeur
+    # visible mais signalee) plutot que de laisser Excel crasher silencieusement.
+    n_tronque = 0
+    for r in data_brut:
+        for i, v in enumerate(r):
+            if isinstance(v, str) and len(v) > 32000:
+                r[i] = v[:32000] + " [TRONQUE]"
+                n_tronque += 1
+    if n_tronque:
+        print(f"AVERTISSEMENT: {n_tronque} champ(s) CSV anormalement long(s) (>32000 caractères, probable corruption source) tronqué(s) pour éviter un plantage Excel -- à vérifier manuellement.")
     pdfs = pdf_infos_precoce
     pdf_total_du_par_facture = {p["numero_facture"]: p["total_du"] for p in pdfs if p["numero_facture"] and p["total_du"] is not None}
 
@@ -430,6 +577,21 @@ def main():
         wb = retry(lambda: xl.Workbooks.Open(os.path.abspath(sortie), UpdateLinks=0, ReadOnly=False))
         if wb is None:
             raise RuntimeError("Excel n'a pas pu ouvrir le fichier (déjà ouvert ? verrouillé ?)")
+
+        # BUG TROUVE 2026-10-08 (signalement utilisateur, com_error -2147024882 = 0x8007000E =
+        # E_OUTOFMEMORY cote COM, reproduit en direct sur le vrai CSV de septembre -- 2376
+        # lignes x 66 colonnes SEULEMENT, aucun champ anormalement long -- plante systematiquement
+        # au 3e paquet de 500 lignes, meme en CLI hors serveur/navigateur) : Calculation restait
+        # en AUTOMATIQUE (jamais mis en Manuel ici, contrairement au finaliseur UPS deja corrige
+        # le 2026-10-07 pour la meme classe de probleme) -- chaque ecriture .Value= declenchait un
+        # recalcul COMPLET du classeur (formules A-E de "Shipment Detail" + TCD/Bilan clients qui
+        # en dependent), le cout cumule explosant a mesure que la plage de donnees grandit. Fix
+        # identique a UPS : Calculation=Manuel + ScreenUpdating=False, DEFINI APRES Workbooks.Open
+        # (jamais avant -- meme piege COM deja documente sur UPS, "Impossible de definir la
+        # propriete Calculation de la classe Application" si tente avant qu'un classeur soit ouvert).
+        xlCalculationManual = -4135
+        xl.Calculation = xlCalculationManual
+        xl.ScreenUpdating = False
 
         # 1) "Shipment Detail" : purge + collage donnees brutes a partir de la colonne F
         #    (A-E = calculees : Montant/Clients/Categorie/E-P/Mode d'envoi).
@@ -449,7 +611,22 @@ def main():
         # "Numéro de suivi" : TOUJOURS numerique dans le brut reel FedEx (jamais de zero de
         # tete constate sur 3607 lignes juin 2026) -- pas de force NumberFormat texte ici,
         # contrairement a TNT (tracking 16 chiffres avec zeros de tete).
-        retry(lambda: ws.Range(ws.Cells(2, FIRST_RAW_COL), ws.Cells(newLast, LAST_RAW_COL)).__setattr__("Value", data_brut))
+        # BUG TROUVE 2026-10-08 (CSV reel de septembre, ligne 1075 : "Reference Notes Line 1"
+        # = "=.!+23") : la VRAIE cause du pywintypes.com_error ("Une exception s'est produite")
+        # etait une chaine commencant par "=" (cf. coerce() plus haut, qui l'echappe desormais
+        # d'une apostrophe) -- PAS une histoire de memoire/taille malgre le code d'erreur
+        # trompeur. Diagnostique par recherche dichotomique sur le vrai fichier (confirme :
+        # memes dimensions en donnees synthetiques = aucun probleme, seule la vraie ligne
+        # plantait, isolee hors de tout le reste du pipeline). Le decoupage par PAQUETS
+        # ci-dessous n'etait pas la correction necessaire, mais reste une securite utile
+        # (meme principe que UPS) : si un futur cas similaire apparait, l'erreur touche moins
+        # de lignes a la fois et reste facile a isoler.
+        CHUNK_ROWS = 500
+        for debut in range(0, len(data_brut), CHUNK_ROWS):
+            paquet = data_brut[debut:debut + CHUNK_ROWS]
+            r0 = 2 + debut
+            r1 = r0 + len(paquet) - 1
+            retry(lambda p=paquet, a=r0, b=r1: ws.Range(ws.Cells(a, FIRST_RAW_COL), ws.Cells(b, LAST_RAW_COL)).__setattr__("Value", p))
         if newLast < oldLast:
             retry(lambda: ws.Range(ws.Cells(newLast + 1, 1), ws.Cells(oldLast, max(LAST_RAW_COL, LAST_CALC_COL))).ClearContents())
 
