@@ -17,7 +17,10 @@ function validate(importRows, opts = {}) {
     // ne modifie jamais importRows.
     if (!o.DateValidite) alerts.push(`L${l} ${t}: DATE manquante`);
     if (!o.Tracking) alerts.push(`L${l}: N° TRACKING manquant`);
-    if (!o.Pays) alerts.push(`L${l} ${t}: PAYS manquant`);
+    // BUG TROUVE 2026-10-07 (UPS, remontee utilisateur) : meme piege que ZONE ci-dessous --
+    // "!o.Pays" est FAUX quand Pays vaut la chaine "0" ou "0.0" (non vide -> truthy en JS),
+    // l'alerte ne remontait donc jamais pour un Pays ecrit tel quel "0"/"0.0" dans le CSV final.
+    if (!o.Pays || o.Pays === '0' || o.Pays === '0.0') alerts.push(`L${l} ${t}: PAYS manquant`);
 
     // -- Zone --
     const zoneHorsGrille = o.Zone.includes('0France00') || o.Zone.includes('0étranger00');

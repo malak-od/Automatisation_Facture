@@ -566,6 +566,11 @@ def main():
         raise RuntimeError("Fichier(s) UPS vide(s) ou illisible(s).")
     print(f"Entrée : {len(all_rows)} ligne(s) brute(s), {len(csv_paths)} fichier(s).")
 
+    _trace = os.environ.get("TRACE_TRACKING", "")
+    if _trace:
+        _n = sum(1 for r in all_rows if str(r[COL["numero_suivi"]] if len(r) > COL["numero_suivi"] else "").strip() == _trace)
+        print(f"TRACE: {_trace} -> {_n} ligne(s) dans all_rows.", flush=True)
+
     # Repli Zone (dernier recours, EN VALEUR uniquement -- ne touche jamais a la formule
     # Excel) : zone=0/vide -> chercher le tracking dans le fichier import CSV du mois
     # precedent (deja livre a l'ERP). Charge tot avec les autres sources externes ;
@@ -663,6 +668,9 @@ def main():
         print(f"{len(demandes_avoir_1z79)} colis en 1Z79 (retour viticulteur chez La Ruche) exclus de l'import — reportés dans l'onglet 'Demande avoir' : {sorted(demandes_avoir_1z79.keys())}.")
     if n_sans_identification:
         print(f"{n_sans_identification} ligne(s) sans Numéro de suivi ni Numéro de référence 1 supprimée(s) (aucune clé d'identification exploitable).")
+    if _trace:
+        _n = sum(1 for r in lignes_retenues if str(r[COL["numero_suivi"]] if len(r) > COL["numero_suivi"] else "").strip() == _trace)
+        print(f"TRACE: {_trace} -> {_n} ligne(s) dans lignes_retenues.", flush=True)
 
     # Repli POIDS en cascade (priorite 1: poids audite UPS en texte -- priorite 2: export WMS
     # brut m/m-1/m-2 -- priorite 3: API UPS Tracking, dernier recours) -- BUG TROUVE 2026-08-27 :
@@ -841,6 +849,88 @@ def main():
         wb = retry(lambda: xl.Workbooks.Open(os.path.abspath(sortie), UpdateLinks=0, ReadOnly=False))
         if wb is None:
             raise RuntimeError("Excel n'a pas pu ouvrir le fichier (déjà ouvert ? verrouillé ?)")
+
+        # OPTIMISATION (2026-10-07, signalement utilisateur : run UPS a 25+ min sans terminer
+        # sur un classeur reel) : par defaut, chaque ecriture de cellule/plage declenche un
+        # recalcul ET un redessin ecran -- sur un classeur de 25000+ lignes brutes avec
+        # XLOOKUP/SUM en cascade, ca multiplie le temps par un facteur enorme. Calcul en
+        # MANUEL (seuls les xl.Calculate() explicites du code recalculent, le reste s'accumule
+        # sans cout), ecran non redessine. BUG TROUVE 2026-10-07 : xl.Calculation ne peut PAS
+        # etre defini avant qu'un classeur soit ouvert (com_error "Impossible de definir la
+        # propriete Calculation de la classe Application" -- deplace donc APRES
+        # Workbooks.Open, jamais avant). Pas besoin de restaurer avant xl.Quit() : toute
+        # l'instance Excel se ferme a la fin (finally plus bas), aucun etat ne survit.
+        xlCalculationManual = -4135
+        xl.Calculation = xlCalculationManual
+        xl.ScreenUpdating = False
+
+        # Trackings a categorie "CODE INCONNU" (charge reelle, non nulle, dont la Categorie
+        # -- colonne D de "Facture UPS" -- resout a "CODE INCONNU") : decision utilisateur
+        # 2026-10-07 -- ne JAMAIS deviner la bonne categorie ERP a la place de l'utilisateur,
+        # garder la ligne visible dans "Fichier import" (exemptee de la purge "sans aucune
+        # charge facturable" plus bas) ET signaler une action manuelle requise.
+        # BUG EVITE : "CODE INCONNU" n'est PAS reserve aux codes absents de
+        # 'Charge.CHG_CODE'!A:A -- verifie sur reel (tracking 1ZA1912WDK91073099, code "IRP") :
+        # IRP EST present en colonne A, mais sa categorie en colonne C vaut explicitement
+        # "CODE INCONNU" (239/471 lignes de la table reelle de septembre 2026 dans ce cas,
+        # cf. docstring en tete). Reproduit donc la CASCADE COMPLETE de la formule D (Adresse/
+        # plus-value BtoC via 'ST SV'!Q:Q et D:D, Fret si code_classe=FRT, TVA si code_classe=
+        # TAX, sinon XLOOKUP vers 'Charge.CHG_CODE'!C:C) plutot que de ne tester que la colonne A.
+        wsChgCode = wb.Sheets("Charge.CHG_CODE")
+        lastChgCode = wsChgCode.Cells(wsChgCode.Rows.Count, 1).End(xlUp).Row
+        categorie_par_code = {}
+        if lastChgCode >= 1:
+            chgCodeValues = wsChgCode.Range(wsChgCode.Cells(1, 1), wsChgCode.Cells(lastChgCode, 3)).Value
+            if lastChgCode == 1:
+                chgCodeValues = (chgCodeValues,)
+            for row in chgCodeValues:
+                if row[0] not in (None, ""):
+                    categorie_par_code[str(row[0]).strip()] = str(row[2] or "").strip()
+        wsStSv = wb.Sheets("ST SV")
+        lastQStSv = wsStSv.Cells(wsStSv.Rows.Count, 17).End(xlUp).Row  # Q (Adresse)
+        lastDStSv = wsStSv.Cells(wsStSv.Rows.Count, 4).End(xlUp).Row   # D (plus-value BtoC)
+        descriptions_adresse = set()
+        if lastQStSv >= 1:
+            qValues = wsStSv.Range(wsStSv.Cells(1, 17), wsStSv.Cells(lastQStSv, 17)).Value
+            if lastQStSv == 1:
+                qValues = (qValues,)
+            descriptions_adresse = {str(row[0]).strip() for row in qValues if row[0] not in (None, "")}
+        descriptions_plus_value = set()
+        if lastDStSv >= 1:
+            dValues = wsStSv.Range(wsStSv.Cells(1, 4), wsStSv.Cells(lastDStSv, 4)).Value
+            if lastDStSv == 1:
+                dValues = (dValues,)
+            descriptions_plus_value = {str(row[0]).strip() for row in dValues if row[0] not in (None, "")}
+
+        def categorie_cascade(code_classe, code_desc, description):
+            if description in descriptions_adresse:
+                return "Adresse"
+            if description in descriptions_plus_value:
+                return "plus-value BtoC"
+            if code_classe == "FRT":
+                return "Frêt"
+            if code_classe == "TAX":
+                return "TVA"
+            return categorie_par_code.get(code_desc, "code inconnu")
+
+        trackings_code_inconnu = {}  # tracking -> {codes: set, montant: float}
+        for r in lignes_retenues:
+            code_classe = str(r[COL["code_classe"]] if len(r) > COL["code_classe"] else "").strip().upper()
+            code_desc = str(r[COL["code_description"]] if len(r) > COL["code_description"] else "").strip()
+            description = str(r[COL["description"]] if len(r) > COL["description"] else "").strip()
+            categorie = categorie_cascade(code_classe, code_desc, description)
+            if categorie.strip().upper() == "CODE INCONNU":
+                t = str(r[COL["numero_suivi"]] if len(r) > COL["numero_suivi"] else "").strip()
+                montant_net = coerce(r[COL["montant_net"]] if len(r) > COL["montant_net"] else "")
+                montant_net = montant_net if isinstance(montant_net, (int, float)) else 0
+                if t and montant_net != 0:
+                    info = trackings_code_inconnu.setdefault(t, {"codes": set(), "montant": 0.0})
+                    info["codes"].add(code_desc)
+                    info["montant"] = round(info["montant"] + montant_net, 2)
+        if trackings_code_inconnu:
+            print(f"{len(trackings_code_inconnu)} tracking(s) avec une charge a 'code inconnu' (categorie ERP non reconnue) -- ligne(s) conservee(s) dans 'Fichier import', action manuelle requise.")
+            for t, info in trackings_code_inconnu.items():
+                print(f"ACTION_MANUELLE_REQUISE:Tracking {t} : charge \"{', '.join(sorted(info['codes']))}\" a code inconnu (categorie ERP non reconnue), montant net {info['montant']:.2f} EUR -- classer manuellement.")
 
         # 1) "Facture UPS" : purge + collage donnees brutes a partir de la colonne E (A-D =
         #    calculees : Clients/Montant assurance/Mode envoi/Categorie).
@@ -1193,9 +1283,17 @@ def main():
         else:
             retry(lambda: wsImp.Range(wsImp.Cells(2, 24), wsImp.Cells(newLastImp, 24)).ClearContents())
 
+        # BUG TROUVE 2026-10-07 (signalement utilisateur, tracking 1ZA1912W0469743363 absent de
+        # "Fichier import" malgre une vraie charge Fret/Taxe gazole/TVA dans le TCD) : tcdrow=
+        # r+2 decalait TOUTES les lignes d'1 par rapport au TCD -- "Fichier import" ligne 2
+        # (premiere ligne de donnees) doit pointer vers TCD ligne 3 (premiere ligne de donnees,
+        # entete sur 2 lignes -- cf. "entete sur 2 lignes" plus haut), donc tcdrow=row+1, pas
+        # row+2. Verifie sur le classeur reel de septembre 2026 (Formula() de 'Fichier import'
+        # I2 valait "=TCD!E4" au lieu de "=TCD!E3" -- la toute PREMIERE ligne du TCD n'etait
+        # JAMAIS referencee par aucune ligne de "Fichier import", quel que soit le mois).
         for col_idx, tmpl in formulas_import.items():
             retry(lambda c=col_idx, t=tmpl: wsImp.Range(wsImp.Cells(2, c), wsImp.Cells(newLastImp, c))
-                  .__setattr__("Formula", [[t.format(row=r, tcdrow=r + 2) for _ in [0]][0] for r in range(2, newLastImp + 1)]))
+                  .__setattr__("Formula", [[t.format(row=r, tcdrow=r + 1) for _ in [0]][0] for r in range(2, newLastImp + 1)]))
 
         if date_validite_serial is not None:
             wsImp.Cells(2, 5).Value = date_validite_serial
@@ -1215,9 +1313,17 @@ def main():
         # apres Calculate() pour resoudre les formules TCD!E.
         xl.Calculate()
         if newLastImp >= 2 and ep_map:
+            # OPTIMISATION (2026-10-07) : lecture EN MASSE de la colonne I (Range(...).Value,
+            # 1 seul aller-retour COM) au lieu d'un .Cells(r, 9).Value par ligne (jusqu'a
+            # plusieurs milliers d'allers-retours COM individuels, chacun couteux). Range sur
+            # 1 seule colonne renvoie un tuple de tuples a 1 element -- meme forme consommee
+            # ensuite (tracking_rows[i][0]).
+            tracking_rows = retry(lambda: wsImp.Range(wsImp.Cells(2, 9), wsImp.Cells(newLastImp, 9)).Value)
+            if newLastImp == 2:  # Range sur 1 seule ligne renvoie un tuple plat, pas tuple de tuples
+                tracking_rows = (tracking_rows,)
             ep_values = []
-            for r in range(2, newLastImp + 1):
-                tracking = str(wsImp.Cells(r, 9).Value or "").strip()
+            for row in tracking_rows:
+                tracking = str(row[0] or "").strip()
                 ep_values.append([ep_map.get(tracking, "")])
             retry(lambda: wsImp.Range(wsImp.Cells(2, 2), wsImp.Cells(newLastImp, 2)).__setattr__("Value", ep_values))
             print(f"'Fichier import' : colonne B (E/P ERP) renseignée depuis l'export WMS pour {sum(1 for v in ep_values if v[0])}/{newLastImp - 1} ligne(s).")
@@ -1247,7 +1353,18 @@ def main():
             # et taxes(18), S Assurance(19), T Zones eloignees(20), U Colis volumineux(21),
             # V Adresses(22), W Fret(23), X plus-value BtoC(24).
             POSTE_COLS_0BASED = [17, 18, 19, 20, 21, 22, 23]
-            lignes_vides = [i for i, row in enumerate(valuesImp) if all((row[c] in (None, "", 0)) for c in POSTE_COLS_0BASED)]
+            IDX_TRACKING_IMPORT = 8  # colonne I, 0-based dans valuesImp (plage debute en A)
+            # Exemption : une ligne a "code inconnu" (cf. plus haut) a une VRAIE charge
+            # facturee (montant net non nul) mais n'alimente AUCUN des 7 postes ERP ci-dessus
+            # (categorie absente de 'Charge.CHG_CODE' -> jamais mappee dans formulas_import) --
+            # la purger silencieusement ferait disparaitre un montant reellement facture.
+            # Decision utilisateur 2026-10-07 : garder la ligne visible, signaler l'action
+            # manuelle (cf. ACTION_MANUELLE_REQUISE plus haut) au lieu de deviner la categorie.
+            lignes_vides = [
+                i for i, row in enumerate(valuesImp)
+                if all((row[c] in (None, "", 0)) for c in POSTE_COLS_0BASED)
+                and str(row[IDX_TRACKING_IMPORT] or "").strip() not in trackings_code_inconnu
+            ]
             if lignes_vides:
                 # Regroupe les indices contigus en plages pour minimiser le nombre d'appels
                 # Delete() (une plage multi-lignes se supprime en 1 seul appel COM).
@@ -1267,6 +1384,18 @@ def main():
                     retry(lambda a=r0, b=r1: wsImp.Range(wsImp.Cells(a, 1), wsImp.Cells(b, LAST_COL_IMPORT)).EntireRow.Delete())
                 newLastImp -= len(lignes_vides)
                 print(f"'Fichier import' : {len(lignes_vides)} ligne(s) sans aucune charge facturable supprimée(s) (tous postes ERP à 0).")
+                # BUG TROUVE 2026-10-07 (signalement utilisateur, run septembre : 7275/8157
+                # lignes "DATE manquante") : la colonne E (Date validite) est une formule EN
+                # CHAINE (=E{prev}, cf. plus haut) -- un EntireRow.Delete() juste au-dessus
+                # casse cette chaine en cascade a partir du point de suppression (toutes les
+                # lignes suivantes heritent d'une reference rompue, silencieusement vide, pas
+                # d'erreur #REF! visible). Reconstruit la chaine ICI, APRES la purge (plus
+                # aucune suppression de ligne a venir sur "Fichier import" avant ce point),
+                # avec le newLastImp definitif -- seule E2 (deja posee en valeur plus haut)
+                # reste la source, E3..EnewLastImp redevient une chaine continue et saine.
+                if newLastImp > 2:
+                    retry(lambda: wsImp.Range(wsImp.Cells(3, 5), wsImp.Cells(newLastImp, 5))
+                          .__setattr__("Formula", [["=E{prev}".format(prev=r - 1)] for r in range(3, newLastImp + 1)]))
 
         wsImp.Range(wsImp.Cells(1, 1), wsImp.Cells(max(newLastImp, 2), LAST_COL_IMPORT)).AutoFilter()
         xl.Calculate()
@@ -1380,6 +1509,14 @@ def main():
             print("Avertissement : remplissage 'Demande avoir' a échoué :", e)
 
         xl.Calculate()
+        if _trace:
+            try:
+                _colI = wsImp.Range(wsImp.Cells(2, 9), wsImp.Cells(newLastImp, 9)).Value
+                _colI = (_colI,) if newLastImp == 2 else _colI
+                _n = sum(1 for row in _colI if str(row[0] or "").strip() == _trace)
+                print(f"TRACE: {_trace} -> {_n} ligne(s) dans 'Fichier import' avant Save().", flush=True)
+            except Exception as e:
+                print(f"TRACE: erreur lecture 'Fichier import' ({e}).", flush=True)
         retry(lambda: wb.Save())
         wb.Close(SaveChanges=True)
 
@@ -1457,6 +1594,15 @@ def main():
                 # l'ERP rejette l'import si le fichier contient un "0" dans Ref.1/Ref.2. Ces deux
                 # colonnes sont donc videes explicitement quand leur valeur est 0/0.0.
                 IDX_REF1_VALUES, IDX_REF2_VALUES = 2, 3
+                # BUG TROUVE 2026-10-07 (signalement utilisateur, run septembre) : Zone (index 6
+                # dans cette plage D->X, = colonne J "Fichier import") ressort parfois en FLOAT
+                # Excel/COM ("5.0", "10.0"...) au lieu d'un entier ("5", "10") -- Pays/Nbr Colis/
+                # Poids n'ont pas ce symptome (deja entiers cote source), seule Zone est
+                # concernee (vient d'une formule XLOOKUP qui renvoie un nombre Excel natif).
+                # Tronque au format entier UNIQUEMENT si la valeur est un float a partie
+                # decimale nulle (ne touche jamais Pays, qui peut legitimement etre du texte
+                # ex. "France").
+                IDX_ZONE_VALUES = 6
                 def clean(v, col_idx=None):
                     nonlocal n_err
                     if isinstance(v, int) and not isinstance(v, bool) and v < -1000000:
@@ -1464,7 +1610,12 @@ def main():
                         return ""
                     if col_idx in (IDX_REF1_VALUES, IDX_REF2_VALUES) and v in (0, 0.0, "0", "0.0"):
                         return ""
+                    if col_idx == IDX_ZONE_VALUES and isinstance(v, float) and v.is_integer():
+                        return int(v)
                     return "" if v is None else v
+                if _trace:
+                    _n = sum(1 for row in values if str(row[5] or "").strip() == _trace)
+                    print(f"TRACE: {_trace} -> {_n} ligne(s) dans 'values' juste avant ecriture CSV final (apres purge fantomes).", flush=True)
                 export_path = os.path.splitext(sortie)[0] + "_import_valeurs.csv"
                 with open(export_path, "w", encoding="utf-8-sig", newline="") as f:
                     w = csv.writer(f, delimiter=";")
