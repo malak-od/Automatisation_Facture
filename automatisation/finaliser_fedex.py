@@ -145,7 +145,11 @@ def read_fedex_csv(path):
                     field.append(c)
             else:
                 field.append(c)
-        elif c == '"':
+        # BUG TROUVE 2026-10-12 (meme fix que readFedexCsv, index.js) : un guillemet au MILIEU
+        # d'un champ non entre guillemets (CSV reel de septembre 2026, ligne 2426 : 9.*3326"-)
+        # ouvrait a tort une zone entre guillemets -> 119 lignes avalees, absentes de l'import.
+        # Seul un guillemet en DEBUT de champ ouvre une zone entre guillemets.
+        elif c == '"' and not field:
             in_quotes = True
         elif c == delim:
             row.append("".join(field))
@@ -242,9 +246,15 @@ def extract_pdf_infos(pdf_paths):
     except ImportError:
         return []
     results = []
+    # BUG TROUVE 2026-10-12 (signalement utilisateur, "Bilan factures" de septembre 2026 avec
+    # les montants PDF de juin) : le "No de Client" apparait parfois EN CLAIR (781542172), parfois
+    # MASQUE (*****1234) selon le PDF -- seule la forme masquee etait acceptee ici, donc AUCUN
+    # numero de facture trouve sur les PDF de septembre (colonne D jamais remplie + regle "facture
+    # sans PDF" jamais appliquee). Meme fix que extractFedexPdfInfo (index.js, 2026-09-09), jamais
+    # porte ici jusqu'a present.
     pat_inv = re.compile(
         r"No de Client\s*:\s*\nNo de Facture\s*:\s*\nDate de la facture\s*:\s*\n"
-        r"Date d.[eé]ch[eé]ance\s*\nMontant d[uû]\s*\n\*+\d+\s*\n(\d+)\s*\n"
+        r"Date d.[eé]ch[eé]ance\s*\nMontant d[uû]\s*\n(?:\*+)?\d+\s*\n(\d+)\s*\n"
     )
     pat_total = re.compile(r"Total d[uû]\s*EUR\s*([\d.,]+)")
     # Bordereaux (1 par envoi/tracking) : pypdf aplatit tout sur 1 seule ligne texte (contrairement
@@ -741,6 +751,14 @@ def main():
         #    Facture sans PDF correspondant : colonne D laissee vide (saisie manuelle de repli).
         wsBf = wb.Sheets("Bilan factures")
         lastBf = wsBf.Cells(wsBf.Rows.Count, 1).End(xlUp).Row
+        # BUG TROUVE 2026-10-12 (meme signalement que pat_inv dans extract_pdf_infos) : les
+        # colonnes D/E n'etaient jamais videes avant d'etre reecrites -- toute facture sans PDF
+        # apparie gardait le montant PDF du MODELE (juin) a la meme ligne, en face d'une facture
+        # du mois genere. Videes (contenu seulement, mise en forme conservee) sur toute la zone
+        # utilisee, y compris sous la nouvelle fin du TCD s'il a raccourci.
+        lastUsedBf = wsBf.UsedRange.Row + wsBf.UsedRange.Rows.Count - 1
+        if lastUsedBf >= 4:
+            retry(lambda: wsBf.Range(wsBf.Cells(4, 4), wsBf.Cells(lastUsedBf, 5)).ClearContents())
         if lastBf >= 4:  # en-tete sur la ligne 3 (constate sur le modele de juin)
             n_pdf_ecrits = 0
             for r in range(4, lastBf + 1):

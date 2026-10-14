@@ -123,7 +123,13 @@ function readFedexCsv(p) {
         else if (text[i + 1] === delim || text[i + 1] === '\r' || text[i + 1] === '\n' || i + 1 >= text.length) inQuotes = false;
         else field += c;
       } else field += c;
-    } else if (c === '"') inQuotes = true;
+    // BUG TROUVE 2026-10-12 (CSV reel de septembre 2026, ligne 2426 : champ non entre
+    // guillemets 9.*3326"-) : un guillemet au MILIEU d'un champ ouvrait a tort une zone entre
+    // guillemets, qui avalait les 119 lignes suivantes jusqu'au prochain guillemet du fichier
+    // -> lignes absentes de l'import + fausses alertes "bordereaux absents du CSV" + faux
+    // numero de facture "Your Packaging". Regle CSV standard : seul un guillemet en DEBUT de
+    // champ ouvre une zone entre guillemets, sinon c'est un caractere normal du texte.
+    } else if (c === '"' && field === '') inQuotes = true;
     else if (c === delim) { row.push(field); field = ''; }
     else if (c === '\r') { /* skip */ }
     else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
