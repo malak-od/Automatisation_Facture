@@ -126,12 +126,9 @@ function normalizeCompte(c) {
 }
 
 /** Lit un CSV UPS brut (Billing, SANS EN-TETE, separateur virgule, latin1 -- confirme sur
- * les fichiers reels de juin 2026). Gestion de guillemets minimale (valeurs UPS n'en
- * contiennent jamais dans l'echantillon reel, mais reste tolerant). */
-function readUpsCsv(p) {
-  const fs = require('fs');
-  const buf = fs.readFileSync(p);
-  const text = buf.toString('latin1');
+ * les fichiers reels de juin 2026). Gestion de guillemets minimale, plus le cas des lignes
+ * ENTIERES entre guillemets (cf. readUpsCsv). */
+function parseUpsCsvText(text) {
   const rows = [];
   let row = [];
   let field = '';
@@ -149,6 +146,23 @@ function readUpsCsv(p) {
     else field += c;
   }
   if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function readUpsCsv(p) {
+  const fs = require('fs');
+  const text = fs.readFileSync(p).toString('latin1');
+  // BUG TROUVE 2026-11-05 (factures mensuelles reelles de septembre/octobre 2026, ex.
+  // Invoice_202601134205 : 2418 lignes sur 54640, ~9252 EUR) : UPS ecrit certaines lignes
+  // ENTIEREMENT entre guillemets ("2.1,0000A1912W,...,""Correction d adresse"",...") -- lues
+  // comme UNE seule case, sans tracking ni montant, donc ignorees en silence (505 envois
+  // absents de l'import UPS de septembre). Une vraie ligne UPS a toujours ~270 colonnes :
+  // une ligne a 1 seule case contenant des virgules est re-decoupee comme une ligne CSV.
+  const rows = [];
+  for (const r of parseUpsCsvText(text)) {
+    if (r.length === 1 && r[0].includes(',')) rows.push(...parseUpsCsvText(r[0]));
+    else rows.push(r);
+  }
   return rows.filter((r) => r.some((v) => v !== ''));
 }
 

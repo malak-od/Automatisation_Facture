@@ -197,7 +197,17 @@ def read_ups_csv(path):
     """CSV UPS Billing brut, SANS EN-TETE, separateur virgule, latin-1."""
     with open(path, encoding="latin-1", newline="") as f:
         rows = list(csv.reader(f))
-    return [r for r in rows if any(v != "" for v in r)]
+    # BUG TROUVE 2026-11-05 (meme fix que readUpsCsv, carriers/ups/index.js) : UPS ecrit
+    # certaines lignes ENTIEREMENT entre guillemets -- lues comme UNE seule case (collee telle
+    # quelle en colonne E de "Facture UPS", sans tracking ni montant) et donc jamais facturees
+    # (~9252 EUR sur la facture mensuelle d'octobre 2026). Re-decoupees comme une ligne CSV.
+    out = []
+    for r in rows:
+        if len(r) == 1 and "," in r[0]:
+            out.extend(csv.reader(r[0].splitlines(keepends=True)))
+        else:
+            out.append(r)
+    return [r for r in out if any(v != "" for v in r)]
 
 
 def load_config(carrier_dir):
