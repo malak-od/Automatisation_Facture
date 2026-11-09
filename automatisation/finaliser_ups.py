@@ -1018,7 +1018,15 @@ def main():
         #    modele fige sur une plage etroite -- meme piege que DPD/Geodis/Mondial Relay/
         #    Chronopost/TNT/FedEx). "Bilan clients" pointe sur 'TCD' (pas 'Facture UPS'),
         #    redirige separement APRES redimensionnement du TCD "TCD" (etape 3).
-        newRangeFacture = ws.Range(ws.Cells(1, 1), ws.Cells(newLast, max(LAST_RAW_COL, LAST_CALC_COL)))
+        # BUG TROUVE 2026-11-09 (generation d'octobre 2026, "Le nom du champ de tableau croise
+        # dynamique n'est pas valide") : les CSV UPS ont 270 colonnes depuis aout 2026, le modele
+        # n'a de titres que sur 250 (+ 4 calculees, A->IT). Excel acceptait jusqu'au run du 08/10
+        # (il nommait lui-meme "Champ255"...) et refuse desormais -- probablement depuis la mise
+        # a jour d'Excel du 20/10. Les TCD ne recoivent donc que les colonnes titrees ; les
+        # donnees des colonnes suivantes restent collees dans 'Facture UPS'.
+        xlToLeft = -4159
+        lastHeaderCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+        newRangeFacture = ws.Range(ws.Cells(1, 1), ws.Cells(newLast, lastHeaderCol))
         for sheet_name in ("Bilan factures", "zone colis poids assurance", "ST SV", "TCD"):
             wsPivot = wb.Sheets(sheet_name)
             for i in range(1, wsPivot.PivotTables().Count + 1):
