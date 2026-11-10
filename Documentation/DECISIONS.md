@@ -336,3 +336,23 @@ Les pipelines restaient bloqués (« stuck ») : le job de détection de secrets
 **Constat initial** : historique complet scanné (136 commits, toutes branches) → aucune fuite, pas d'allowlist (`.gitleaks.toml`) nécessaire.
 
 **Limites** : protège seulement les postes où le hook est activé ; `--no-verify` le contourne ; GitLab CE n'a pas de protection au push. Pour réactiver le scan CI quand un runner Docker existera : supprimer la variable dans `.gitlab-ci.yml`, ou la passer à `false` dans Settings > CI/CD > Variables.
+
+## Dépendances de facturation-app : mise à jour de sécurité, xlsx installé depuis SheetJS (2026-11-10)
+
+`npm audit` relevait 10 vulnérabilités (1 critique, 3 hautes), et multer 1.x a des failles connues que npm audit ne voit pas : sa version `1.4.5-lts.x` est une préversion, que la comparaison semver écarte.
+
+**Décision** :
+- **xlsx 0.20.3 installé depuis `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`**. SheetJS ne publie plus ses correctifs sur npm, où la dernière version reste la 0.18.5, vulnérable (pollution de prototype, ReDoS). Conséquences : `npm ci` doit pouvoir joindre cdn.sheetjs.com, et une future mise à jour de xlsx se fait à la main en changeant l'URL dans `package.json`.
+- **multer 2.5.0, express 4.22.3**, et sous-dépendances corrigées via `npm audit fix`.
+- **`overrides`** : brace-expansion 1.x ≥ 1.1.21, uuid 11.1.1 sous exceljs, minimatch 11.0.6 sous readdir-glob. npm proposait à la place de rétrograder exceljs (3.4.0) et archiver (7.0.1).
+
+**Vérifié** (même entrée, avant et après) :
+- 18 classeurs réels, avec toutes les options `readFile` et `sheet_to_json` du code : aucun nombre ne change.
+- Dates lues avec `cellDates: true` : minuit pile au lieu de minuit moins 21 s. L'arrondi au jour de DPD, Geodis, Lettres et Delivengo donne le même résultat.
+- Textes sur plusieurs lignes : `\r\n` devient `\n`.
+- Heures sans date (valeurs antérieures au 01/03/1900) : un jour d'écart sur la date de base. Ça ne touche que des onglets des modèles, que Node ne lit pas. Aucune vraie date n'est décalée.
+- Écriture FACMAG (`aoa_to_sheet` + `writeFile`) : sortie identique octet pour octet.
+- multer : le re-décodage latin1 → UTF-8 des noms de fichiers (`server.js`) reste correct, car multer 2.5 décode toujours en latin1 par défaut.
+- Zip (archiver) et écriture des classeurs (exceljs) : identiques.
+
+**Point ouvert, antérieur à la mise à jour** : Lettres accepte un export WMS en CSV `;`, lu par xlsx, qui interprète `0,25` comme `25`, `03/06/2026` comme le 6 mars, et retire les zéros de tête (`00123456`). C'est le cas avec 0.18.5 comme avec 0.20.3. Aucun impact tant que l'export est fourni en `.xlsx`.
