@@ -288,3 +288,11 @@ Demande utilisateur : « faut regrouper les lignes d'un même envoi ». K&N fact
 La génération Kuehne d'octobre 2026 a livré le classeur simplifié de secours (`classeurClone:false`) au lieu du modèle. Cause : K&N a ajouté une colonne en fin de CSV (`T_GENERIQUE2`, vide en octobre) ; la ligne 1 du modèle n'avait pas de titre à cet endroit et Excel refuse un TCD dont une colonne source n'a pas de titre (`ChangePivotCache` : « Le nom du champ de tableau croisé dynamique n'est pas valide », même erreur que UPS le 2026-11-09).
 
 **Fix** : `automatisation/finaliser_kuehne.py` recopie les titres du CSV en ligne 1 de « Fichier Kuehne » (identiques au modèle pour les 183 colonnes connues). `T_GENERIQUE2` n'est classé dans aucun poste : s'il porte un jour un montant, le carrier JS l'affiche déjà en avertissement « Code tarifaire NON classé ».
+
+## Fichiers générés : enregistrés sur le poste de l'utilisateur, plus de .zip (2026-11-10)
+
+Demande utilisateur : le bouton du résultat ne doit plus produire un .zip, et l'enregistrement doit se faire sur le poste depuis lequel la personne utilise le logiciel (connexion via Authentik), pas sur le serveur.
+
+**Implémentation** :
+- `facturation-app/public/index.html` : bouton « Enregistrer sur mon poste » (`enregistrerSurPoste`). Sur Edge/Chrome (site en HTTPS ou localhost), la personne choisit un dossier de son poste (le navigateur le repropose la fois suivante) et les fichiers y sont écrits dans un sous-dossier `<transporteur>_<AAAA_MM>`, sans zip. Sinon, repli : un téléchargement par fichier dans le dossier Téléchargements du poste. Un navigateur ne peut pas ouvrir l'Explorateur Windows lui-même.
+- `facturation-app/server.js` : routes `/api/download-zip` et `/api/reveal` supprimées, ainsi que la copie automatique des fichiers dans le dossier Téléchargements **du serveur** (en prod, celui de la VM, invisible pour l'utilisateur). Les fichiers restent servis un par un via `/outputs/<stamp>/<nom>`. La dépendance `archiver` n'est plus utilisée (laissée dans `package.json`).

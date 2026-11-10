@@ -376,6 +376,7 @@ function renderResult(d, monthChosen) {
   // "0" dans le titre, aucune alerte) -- risque de livrer un import vide sans s'en rendre
   // compte si le mauvais fichier est depose par erreur.
   const zeroLignes = !d.lignes;
+  fichiersGeneres = [downloads.workbook, downloads.csv, ...(downloads.multi || []).map((m) => m.csv)].filter(Boolean);
   document.getElementById('result').innerHTML = `
     <div class="card"><h3>2. Résultat — ${d.lignes} lignes</h3>
       ${zeroLignes ? `<div class="plan-note" style="border-color:#ef4444;background:rgba(239,68,68,.1);color:#f87171">🚫 Aucune ligne exploitable trouvée dans les fichiers déposés — vérifiez qu'il s'agit bien des bons documents avant d'utiliser les fichiers générés.</div>` : ''}
@@ -389,17 +390,62 @@ function renderResult(d, monthChosen) {
     <div class="card"><h3>3. Fichiers générés${d.periode ? ' — période ' + d.periode : ''}</h3>
       ${monthMismatch ? `<div class="kv" style="color:var(--warn)">⚠️ Mois choisi (${monthChosen.replace('_',' ')}) différent de la période détectée dans les documents (${d.periode.replace('_',' ')}) — vérifiez les fichiers déposés.</div>` : ''}
       ${downloads.workbook ? (d.classeurClone ? '<div class="kv" style="color:#7dd3fc">📊 Classeur = <b>copie fidèle</b> du fichier fait à la main (feuilles, formules, pivots, mise en forme)</div>' : '<div class="kv">📊 Classeur en version simplifiée (Excel non disponible)</div>') : ''}
-      <div class="kv" style="margin-top:8px">✅ Enregistrés dans le dossier <b>Téléchargements\\${d.stamp}\\</b> :</div>
+      <div class="kv" style="margin-top:8px">✅ Fichiers prêts :</div>
       <ul style="margin:6px 0 14px 20px;color:#cbd5e1;line-height:1.9">${fileItems}</ul>
-      <button class="go" onclick="telechargerZip('${d.stamp}')">📦 Télécharger le dossier (.zip)</button>
+      <button class="go" id="btn-enregistrer" onclick="enregistrerSurPoste('${d.stamp}')">💾 Enregistrer sur mon poste</button>
+      <div class="kv" id="etat-enregistrement" style="margin-top:8px"></div>
     </div>`;
 }
 
-// Declenche un vrai telechargement navigateur (marche a distance, contrairement a l'ancien
-// bouton "Ouvrir le dossier" qui demandait au SERVEUR d'ouvrir son propre Explorateur --
-// invisible si le logiciel est utilise via un lien, pas en local sur le poste serveur).
-function telechargerZip(stamp) {
-  window.location.href = `/api/download-zip/${encodeURIComponent(stamp)}`;
+// Enregistrement des fichiers generes sur le POSTE de la personne connectee (demande
+// utilisateur 2026-11-10 : plus de .zip, et enregistrement sur le poste qui utilise le logiciel
+// via Authentik, pas sur le serveur). Edge/Chrome : on choisit un dossier du poste (retenu par
+// le navigateur pour la fois suivante) et les fichiers y sont ecrits dans un sous-dossier
+// <stamp>, sans zip. Navigateur sans cette possibilite (ou site non HTTPS) : un telechargement
+// par fichier, dans le dossier Telechargements du poste.
+let fichiersGeneres = [];
+async function enregistrerSurPoste(stamp) {
+  const etat = document.getElementById('etat-enregistrement');
+  const btn = document.getElementById('btn-enregistrer');
+  const fichiers = fichiersGeneres;
+  if (!fichiers.length) { etat.textContent = 'Aucun fichier à enregistrer.'; return; }
+  if (window.showDirectoryPicker) {
+    let dossier = null;
+    try {
+      dossier = await window.showDirectoryPicker({ id: 'facturation', mode: 'readwrite', startIn: 'downloads' });
+    } catch (e) {
+      if (e.name === 'AbortError') return; // choix du dossier annule
+    }
+    if (dossier) {
+      btn.disabled = true;
+      try {
+        const sousDossier = await dossier.getDirectoryHandle(stamp, { create: true });
+        for (const [i, f] of fichiers.entries()) {
+          etat.textContent = `Enregistrement ${i + 1}/${fichiers.length} : ${f.name}…`;
+          const r = await fetch(f.url);
+          if (!r.ok) throw new Error(`${f.name} introuvable sur le serveur (${r.status})`);
+          const fichier = await sousDossier.getFileHandle(f.name, { create: true });
+          const ecriture = await fichier.createWritable();
+          await ecriture.write(await r.blob());
+          await ecriture.close();
+        }
+        etat.innerHTML = `✅ ${fichiers.length} fichier(s) enregistré(s) dans <b>${dossier.name}\\${stamp}\\</b>`;
+      } catch (e) {
+        etat.textContent = `⚠️ Enregistrement interrompu : ${e.message || e}. Fermez le fichier s'il est ouvert dans Excel, puis réessayez.`;
+      } finally { btn.disabled = false; }
+      return;
+    }
+  }
+  for (const f of fichiers) {
+    const a = document.createElement('a');
+    a.href = f.url;
+    a.download = f.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    await new Promise((ok) => setTimeout(ok, 500)); // le navigateur bloque des telechargements trop rapproches
+  }
+  etat.textContent = `✅ ${fichiers.length} fichier(s) téléchargé(s) dans le dossier Téléchargements de ce poste.`;
 }
 
 // Historique des generations (demande utilisateur 2026-09-02) : liste tous les runs passes

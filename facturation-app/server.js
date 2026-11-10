@@ -6,11 +6,9 @@ require('dotenv').config(); // charge facturation-app/.env (identifiants API UPS
 const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const execFileAsync = require('util').promisify(execFile);
-const { ZipArchive } = require('archiver');
 const registry = require('./src/registry');
 const { writeImportCsv, writeWorkbook, readImportRowsFromValuesCsv, readImportCsvFinal } = require('./src/core/excelOut');
 const { validate } = require('./src/core/validate');
@@ -20,10 +18,6 @@ const app = express();
 const PORT = Number(process.env.PORT) || 4000; // Number() : sinon "4000"+1 = "40001" (concat de chaîne)
 const UPLOADS = path.join(__dirname, 'uploads');
 const OUTPUTS = path.join(__dirname, 'outputs');
-// Dossier Telechargements Windows (demande utilisateur 2026-08-26 : le bouton "Ouvrir le
-// dossier" doit pointer ici, pas sur outputs/ de l'app) -- sous-dossier par stamp (comme
-// outputs/<stamp>/) pour ne pas melanger les fichiers de generations differentes.
-const DOWNLOADS = path.join(os.homedir(), 'Downloads');
 fs.mkdirSync(UPLOADS, { recursive: true });
 fs.mkdirSync(OUTPUTS, { recursive: true });
 
@@ -92,35 +86,10 @@ app.use('/outputs', express.static(OUTPUTS));
 // Liste des transporteurs (metadonnees pour l'UI)
 app.get('/api/carriers', (_req, res) => res.json(registry.list()));
 
-// Ouvre le dossier de sortie (copie dans Telechargements) dans l'Explorateur Windows (logiciel local)
-app.post('/api/reveal', (req, res) => {
-  const stamp = String(req.body.stamp || '').replace(/[^a-z0-9_]/gi, '');
-  const dir = path.join(DOWNLOADS, stamp);
-  if (!stamp || !dir.startsWith(DOWNLOADS) || !fs.existsSync(dir)) return res.status(400).json({ error: 'Dossier introuvable' });
-  execFile('explorer.exe', [dir], () => {}); // explorer renvoie un code != 0 meme en cas de succes -> on ignore
-  res.json({ ok: true });
-});
-
-// Telecharge le dossier de sortie en .zip (marche a distance, contrairement a /api/reveal qui
-// ouvre l'Explorateur DU SERVEUR -- invisible si le logiciel est utilise via un lien, pas en
-// local sur le poste qui heberge le serveur). Lit directement OUTPUTS/<stamp>/, pas sa copie
-// dans Telechargements (source la plus directe, pas d'attente de la copie best-effort).
-app.get('/api/download-zip/:stamp', (req, res) => {
-  const stamp = String(req.params.stamp || '').replace(/[^a-z0-9_]/gi, '');
-  const dir = path.join(OUTPUTS, stamp);
-  if (!stamp || !dir.startsWith(OUTPUTS) || !fs.existsSync(dir)) return res.status(400).json({ error: 'Dossier introuvable' });
-
-  res.attachment(`${stamp}.zip`);
-  const archive = new ZipArchive({ zlib: { level: 9 } });
-  archive.on('error', (err) => {
-    console.error('Erreur creation zip :', err.message);
-    if (!res.headersSent) res.status(500).json({ error: 'Erreur lors de la creation du zip' });
-  });
-  archive.pipe(res);
-  // Exclut run.json (metadonnees internes, pas un livrable a telecharger)
-  archive.glob('**/*', { cwd: dir, ignore: ['run.json'] });
-  archive.finalize();
-});
+// Fichiers generes : servis un par un via /outputs/<stamp>/<nom> et enregistres par le
+// NAVIGATEUR sur le poste de la personne connectee (demande utilisateur 2026-11-10 : plus de
+// .zip, et rien d'enregistre dans le dossier Telechargements du serveur -- cf. index.html,
+// enregistrerSurPoste). Remplace /api/reveal (Explorateur du serveur) et /api/download-zip.
 
 // Traitement : recoit les fichiers + l'id transporteur, genere les livrables
 app.post('/api/process', upload.any(), async (req, res) => {
@@ -328,19 +297,6 @@ app.post('/api/process', upload.any(), async (req, res) => {
     if (workbookMode !== 'none') downloads.workbook = link(wbName);
     if (!workbookOnly && impCsvName && !result.multiImports) { downloads.csv = link(impCsvName); }
     if (multiDownloads.length) downloads.multi = multiDownloads;
-
-    // Copie des fichiers generes dans Telechargements\<stamp>\ (demande utilisateur 2026-08-26 :
-    // le bouton "Ouvrir le dossier" doit pointer vers Telechargements, pas outputs/ de l'app) --
-    // best-effort : ne bloque jamais la reponse si Telechargements est inaccessible/plein.
-    try {
-      const dlDir = path.join(DOWNLOADS, stamp);
-      fs.mkdirSync(dlDir, { recursive: true });
-      for (const name of fs.readdirSync(dir)) {
-        fs.copyFileSync(path.join(dir, name), path.join(dlDir, name));
-      }
-    } catch (e) {
-      console.warn('Copie vers Telechargements KO :', String(e.message || e).slice(0, 200));
-    }
 
     const responseBody = {
       carrier: carrier.name,
