@@ -114,3 +114,17 @@ Statut : tous les transporteurs listés sont opérationnels (`ready`), sauf ment
 - Certains écarts résiduels mineurs, déjà investigués et documentés, restent volontairement non corrigés lorsqu'ils sont jugés non significatifs (montant négligeable, cas isolé).
 - L'application traite un mois à la fois, en local — pas encore de base de données ni d'environnement de production partagé/centralisé (une branche `prod` dédiée existe, avec un process de déploiement documenté pour une VM Windows, mais chaque instance reste indépendante).
 - UPS est le seul transporteur à appeler une API externe en direct (API UPS Tracking, en tout dernier recours du repli poids/colis, après le texte audité et l'export WMS partagé) — nécessite des identifiants `UPS_CLIENT_ID`/`UPS_CLIENT_SECRET` et un accès réseau sortant vers `onlinetools.ups.com`, absents pour tous les autres transporteurs.
+
+## 8. Détection de secrets (gitleaks)
+
+Un hook `pre-commit` versionné (`.githooks/pre-commit`) refuse tout commit qui contient un secret (mot de passe, clé d'API UPS, jeton…), avant qu'il parte sur GitLab. À faire **une fois par poste**, puis une fois par clone :
+
+```
+winget install --id Gitleaks.Gitleaks -e
+git config core.hooksPath .githooks
+```
+
+- Sans gitleaks installé, le hook **refuse** le commit au lieu de laisser passer.
+- Les secrets vont dans `facturation-app/.env`, ignoré par git.
+- Faux positif avéré : commentaire `gitleaks:allow` sur la ligne concernée. `git commit --no-verify` contourne le hook : à réserver à ce cas.
+- Rien ne vérifie côté serveur que le hook est actif. Le scan de la CI est désactivé faute de runner Docker (voir `.gitlab-ci.yml` et `Documentation/DECISIONS.md`).

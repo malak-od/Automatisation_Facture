@@ -326,3 +326,13 @@ Pour octobre 2026, la facture TNT a été fournie au format **FACMAG.CSV** (expo
 **Testé** : octobre 2026 réel → 162 lignes (162 envois, 290 colis ; nb colis = 1 + TMC = « Nb colis dans l'envoi » sur les 162 envois), Frêt 1 512,06 € + Colis volumineux 10 € + carburant 168,58 € = **1 690,64 € = TOTAL GÉNÉRAL du PDF (écart 0,00 €)**, 0 alerte ; classeur Excel construit par le finaliseur (mêmes 162 envois que le CSV). Septembre (détail facture) : CSV identique au CSV généré le 09/10 (pas de régression).
 
 **Point ouvert, antérieur au FACMAG (constaté en testant)** : pour un envoi de plusieurs colis, le **poids** du CSV d'import = poids du seul colis retenu (le plus grand numéro), alors que l'onglet « Import csv » du classeur (et donc le fichier fait main) donne le poids **total de l'envoi** (TCD « Nb colis et poids » = max sur toutes les lignes de l'envoi, ligne ENV comprise). 121 lignes concernées en septembre, 83 en octobre. À trancher avec l'utilisatrice (impacte le prix calculé par l'ERP).
+
+## Détection de secrets : hook local gitleaks, scan CI désactivé (2026-11-10)
+
+Les pipelines restaient bloqués (« stuck ») : le job de détection de secrets de GitLab (`Jobs/Secret-Detection.gitlab-ci.yml`) exige un runner Docker, et **aucun runner n'est assigné au projet**. Les deux runners shell du groupe (#3, #6) servent d'autres projets ; #3 tourne sur la VM de production avec des droits sur `/opt`, alors que cette application n'y est pas déployée — l'assigner a été écarté.
+
+**Décision** : scan CI désactivé (`SECRET_DETECTION_DISABLED: "true"` dans `.gitlab-ci.yml`, sur `main` et `prod`), remplacé par un hook `pre-commit` gitleaks versionné (`.githooks/pre-commit`, activation décrite dans le README). Le hook analyse les fichiers indexés avec `--redact` (secret jamais affiché) et **refuse** le commit si gitleaks est introuvable. `.gitattributes` force le hook en LF : avec `core.autocrlf=true`, un hook en CRLF ne s'exécute plus.
+
+**Constat initial** : historique complet scanné (136 commits, toutes branches) → aucune fuite, pas d'allowlist (`.gitleaks.toml`) nécessaire.
+
+**Limites** : protège seulement les postes où le hook est activé ; `--no-verify` le contourne ; GitLab CE n'a pas de protection au push. Pour réactiver le scan CI quand un runner Docker existera : supprimer la variable dans `.gitlab-ci.yml`, ou la passer à `false` dans Settings > CI/CD > Variables.

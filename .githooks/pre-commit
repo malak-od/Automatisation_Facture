@@ -1,0 +1,39 @@
+#!/bin/sh
+# Bloque un commit qui contient un secret (mot de passe, cle d'API UPS, jeton...).
+# gitleaks analyse uniquement ce qui est indexe (git add), avant que le commit existe :
+# une fois pousse sur GitLab, un secret est dans tous les clones et doit etre revoque.
+#
+# Activation, une fois par clone :   git config core.hooksPath .githooks
+# Installation de gitleaks (Windows) : winget install --id Gitleaks.Gitleaks -e
+
+# Les clients Git graphiques (VS Code, Fork...) n'ont pas toujours le PATH du
+# terminal, surtout juste apres l'installation : on cherche aussi chez winget.
+GITLEAKS=$(command -v gitleaks 2>/dev/null)
+if [ -z "$GITLEAKS" ] && [ -n "$LOCALAPPDATA" ]; then
+  for candidat in \
+    "$LOCALAPPDATA/Microsoft/WinGet/Links/gitleaks.exe" \
+    "$LOCALAPPDATA"/Microsoft/WinGet/Packages/Gitleaks.Gitleaks_*/gitleaks.exe; do
+    if [ -x "$candidat" ]; then GITLEAKS=$candidat; break; fi
+  done
+fi
+
+# Introuvable : on REFUSE le commit. Laisser passer en silence ferait croire
+# le poste protege alors qu'il ne l'est pas.
+if [ -z "$GITLEAKS" ]; then
+  echo "pre-commit : gitleaks est introuvable, commit refuse." >&2
+  echo "  Installer : winget install --id Gitleaks.Gitleaks -e" >&2
+  echo "  puis relancer le terminal ou l'editeur (VS Code) pour recharger le PATH." >&2
+  exit 1
+fi
+
+# --redact : le secret trouve n'est jamais affiche en clair (terminal, logs de l'editeur).
+"$GITLEAKS" git --pre-commit --staged --redact --no-banner --verbose
+code=$?
+if [ "$code" -ne 0 ]; then
+  echo "" >&2
+  echo "pre-commit : gitleaks a detecte un secret dans les fichiers indexes, commit refuse." >&2
+  echo "  Retirer le secret (le mettre dans facturation-app/.env, ignore par git), puis recommencer." >&2
+  echo "  Faux positif avere : ajouter le commentaire  gitleaks:allow  sur la ligne concernee." >&2
+  exit 1
+fi
+exit 0
