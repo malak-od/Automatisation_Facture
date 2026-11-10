@@ -306,3 +306,13 @@ Demande utilisateur : choisir la période de facturation sur la page d'accueil (
 - `facturation-app/server.js` : nouvelle route `GET /api/suivi?periode=AAAA_MM`, qui lit `outputs/<transporteur>_<période>/run.json` pour chaque transporteur (statut, date, lignes, total, nombre d'alertes).
 
 **À savoir** : le suivi montre la **dernière** génération de la période. Une génération en erreur réécrit le `run.json` du même dossier : la tuile passe à « Erreur » même si une génération précédente avait réussi (les fichiers de celle-ci restent dans le dossier).
+
+## UPS — compte 11651R = UPS_COD (2026-11-10)
+
+Confirmé par l'utilisatrice : le compte UPS `11651R` (noté « non utilisé » dans `Numeros de comptes UPS.docx`) est un compte **UPS_COD**. Réactivé en octobre 2026 (11 envois, 84,33 € de fret) ; faute de transporteur dans la table « Comptes UPS », ses envois avaient été exclus de l'import d'octobre (alerte « Compte UPS 11651R sans transporteur »).
+
+**Pour les prochaines factures** : `11651R` → `UPS_COD` dans l'onglet « Comptes UPS » du modèle `Transporteurs/UPS/2026_06_Facture UPS.xlsx` (c'est lui que lit `finaliser_ups.py`) et dans `facturation-app/src/carriers/ups/config.json`.
+
+**Octobre 2026** : les 11 envois ont été ajoutés à la main dans les fichiers corrigés de l'utilisatrice (`Téléchargements\ups_2026_10`) — « Comptes UPS » mis à jour, 11 lignes ajoutées en fin de « Fichier import » avec les mêmes formules, 11 lignes insérées dans le CSV (UPS_COD, FR, zone France, fret total 84,33 €). CSV : 7 723 → 7 734 lignes, total 127 810,93 → 127 895,26 €, aucune nouvelle alerte.
+
+**Reste ouvert** : compte `56W679` (1 envoi, 39,60 € en octobre), absent de la table, transporteur inconnu.

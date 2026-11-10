@@ -7,7 +7,7 @@
   "_comment_comptes": "Onglet 'Comptes UPS' du classeur modele (2026_06_Facture UPS.xlsx) -- mapping compte (6 caracteres extraits du tracking, positions 3-8 : RIGHT(LEFT(tracking,8),6)) -> transporteur UPS/UPS_COD. 2 'transporteurs' distincts en facturation (meme transporteur physique, grilles/comptes differents), formule modele : IF(COUNTIF('Comptes UPS'!A:A,RIGHT(LEFT(I,8),6))=0,\"inconnu\",XLOOKUP(...)).",
   "comptes": {
     "111R9F": null,
-    "11651R": null,
+    "11651R": "UPS_COD",
     "4F261E": "UPS",
     "4V4555": "UPS",
     "4V47R4": "UPS",
