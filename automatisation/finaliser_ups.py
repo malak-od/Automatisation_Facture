@@ -1143,7 +1143,10 @@ def main():
             src = str(pt.PivotCache().SourceData)
             if "TCD" not in src:
                 continue
-            newCache = wb.PivotCaches().Create(SourceType=xlDatabase, SourceData=wsTcd.Range(wsTcd.Cells(1, 1), wsTcd.Cells(max(lastTcd, 2), 16)))
+            # BUG TROUVE 2026-11-09 (meme erreur Excel que les TCD de 'Facture UPS' ci-dessus) :
+            # la plage A1:P avait des titres vides en ligne 1 (D, G a P). Ce TCD n'utilise que
+            # Cout et Client : retour a la source du modele (B2:C, titres en ligne 2).
+            newCache = wb.PivotCaches().Create(SourceType=xlDatabase, SourceData=wsTcd.Range(wsTcd.Cells(2, 2), wsTcd.Cells(max(lastTcd, 3), 3)))
             pt.ChangePivotCache(newCache)
         wb.RefreshAll()
         xl.Calculate()
@@ -1378,10 +1381,39 @@ def main():
             # la purger silencieusement ferait disparaitre un montant reellement facture.
             # Decision utilisateur 2026-10-07 : garder la ligne visible, signaler l'action
             # manuelle (cf. ACTION_MANUELLE_REQUISE plus haut) au lieu de deviner la categorie.
+            # Decision utilisateur 2026-11-09 (octobre 2026, comptes 11651R et 56W679) : une ligne
+            # sans transporteur (colonne D a 0/vide/"inconnu" = compte sans valeur ou absent de
+            # 'Comptes UPS') ne va ni dans "Fichier import" ni dans le CSV. Une alerte par compte
+            # indique le montant exclu, pour qu'il ne disparaisse pas en silence.
+            IDX_TRANSPORTEUR_IMPORT = 3  # colonne D, 0-based dans valuesImp
+            indices_sans_transporteur = {
+                i for i, row in enumerate(valuesImp)
+                if row[IDX_TRANSPORTEUR_IMPORT] in (None, "", 0)
+                or str(row[IDX_TRANSPORTEUR_IMPORT]).strip().lower() == "inconnu"
+            }
+            trackings_sources = {
+                str(r[COL["numero_suivi"]] if len(r) > COL["numero_suivi"] else "").strip()
+                for r in lignes_retenues
+            }
+            sans_transporteur_par_compte = {}
+            for i in sorted(indices_sans_transporteur):
+                row = valuesImp[i]
+                t = str(row[IDX_TRACKING_IMPORT] or "").strip()
+                if t not in trackings_sources:
+                    continue  # ligne fantome du TCD, pas un vrai envoi : rien a signaler
+                compte = t[2:8] if t.upper().startswith("1Z") else t[:6]
+                info = sans_transporteur_par_compte.setdefault(compte, {"trackings": [], "montant": 0.0})
+                info["trackings"].append(t)
+                # num() et pas isinstance(float) : Excel renvoie un Decimal pour les cellules au
+                # format monetaire (montant affiche a 0.00 sinon).
+                info["montant"] = round(info["montant"] + sum(num(row[c]) for c in POSTE_COLS_0BASED), 2)
+            for compte, info in sans_transporteur_par_compte.items():
+                print(f"ACTION_MANUELLE_REQUISE:Compte UPS {compte} sans transporteur dans 'Comptes UPS' : {len(info['trackings'])} envoi(s) exclu(s) de l'import, montant {info['montant']:.2f} EUR non importe (ex. {', '.join(info['trackings'][:3])}).")
             lignes_vides = [
                 i for i, row in enumerate(valuesImp)
-                if all((row[c] in (None, "", 0)) for c in POSTE_COLS_0BASED)
-                and str(row[IDX_TRACKING_IMPORT] or "").strip() not in trackings_code_inconnu
+                if i in indices_sans_transporteur
+                or (all((row[c] in (None, "", 0)) for c in POSTE_COLS_0BASED)
+                    and str(row[IDX_TRACKING_IMPORT] or "").strip() not in trackings_code_inconnu)
             ]
             if lignes_vides:
                 # Regroupe les indices contigus en plages pour minimiser le nombre d'appels
@@ -1401,7 +1433,7 @@ def main():
                     r0, r1 = i0 + 2, i1 + 2  # index 0-based -> ligne Excel 1-based (+entete)
                     retry(lambda a=r0, b=r1: wsImp.Range(wsImp.Cells(a, 1), wsImp.Cells(b, LAST_COL_IMPORT)).EntireRow.Delete())
                 newLastImp -= len(lignes_vides)
-                print(f"'Fichier import' : {len(lignes_vides)} ligne(s) sans aucune charge facturable supprimée(s) (tous postes ERP à 0).")
+                print(f"'Fichier import' : {len(lignes_vides)} ligne(s) supprimée(s) (sans aucune charge facturable, ou sans transporteur : {len(indices_sans_transporteur)}).")
                 # BUG TROUVE 2026-10-07 (signalement utilisateur, run septembre : 7275/8157
                 # lignes "DATE manquante") : la colonne E (Date validite) est une formule EN
                 # CHAINE (=E{prev}, cf. plus haut) -- un EntireRow.Delete() juste au-dessus
@@ -1411,6 +1443,11 @@ def main():
                 # aucune suppression de ligne a venir sur "Fichier import" avant ce point),
                 # avec le newLastImp definitif -- seule E2 (deja posee en valeur plus haut)
                 # reste la source, E3..EnewLastImp redevient une chaine continue et saine.
+                # 2026-11-09 : E2 reposee ici aussi -- si la ligne 2 fait partie des lignes
+                # supprimees (cas des comptes sans transporteur, tries en tete), la valeur part
+                # avec elle et l'ancienne E14 remontee en E2 pointe vers #REF!.
+                if date_validite_serial is not None:
+                    wsImp.Cells(2, 5).Value = date_validite_serial
                 if newLastImp > 2:
                     retry(lambda: wsImp.Range(wsImp.Cells(3, 5), wsImp.Cells(newLastImp, 5))
                           .__setattr__("Formula", [["=E{prev}".format(prev=r - 1)] for r in range(3, newLastImp + 1)]))
