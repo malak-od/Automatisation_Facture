@@ -137,11 +137,12 @@ Chaque ligne CSV porte `Mt HT (hors frais)`, `Mt HT (avec frais)` et ~120 colonn
 - Le calcul « résidu » du poste Gazole capte l'intégralité de ces montants (sur les lignes normales il vaut 0).
 - Les taux (MESS 11,70 %) proviennent du **barème gazole** (onglet dédié : prix €/l → %) ; l'affrètement (8,43 %) suit un indice distinct.
 
-### 5.4 Granularité : 1 ligne CSV = 1 ligne import
-- L'export ERP est **1:1** avec les lignes CSV brutes — **AUCUN regroupement par tracking**. La TCD (pivot par tracking) ne sert **qu'au contrôle**.
+### 5.4 Granularité : 1 ligne import par envoi (depuis le 2026-11-10)
+- **Changement 2026-11-10 (décision utilisateur)** : le **CSV d'import** a **une seule ligne par tracking**. Un même envoi est souvent facturé deux fois par K&N : le **fret** sur la facture transport, un **frais en plus** (colis volumineux, adresse particulier, T_PRS…) sur la facture « événements ». Les lignes d'un même tracking sont regroupées : on garde la ligne qui porte le fret (poids, colis, zone, nom) et on **additionne** les postes des autres → **total inchangé**. Avant, ces paires partaient en 2 lignes et l'ERP les signalait en avarie « doublon fichier » (fusion à la main). Code : `regrouperParEnvoi()` dans `facturation-app/src/carriers/kuehne/index.js`.
+- Le **classeur Excel** (onglets TCD et Kuehne_Import) garde, lui, une ligne par tracking **et par facture** (le TCD a « No facture » en ligne, utile au contrôle des PDF) : les paires y restent sur 2 lignes.
 - **Seul filtrage** : on **exclut les lignes dont le tracking est vide** (Ref EDI ET ComRef vides) = les lignes de synthèse.
-- Identité : **190 lignes brutes − 3 sans tracking = 187 = lignes ERP** (exact).
-- ⚠️ **7 trackings apparaissent dans les 2 CSV** (principale + événements) et donnent **2 lignes ERP distinctes** : un regroupement naïf par tracking les fusionnerait et **casserait les totaux**.
+- Identité juin 2026 : **190 lignes brutes − 3 sans tracking = 187**, dont **7 trackings présents dans les 2 CSV** → **180 lignes d'import** après regroupement (même total 13 335,88 €). Octobre 2026 : 252 → 238 lignes (14 paires), même total 12 561,82 €.
+- ⚠️ Ne jamais **supprimer** une des deux lignes sans additionner ses montants (casserait les totaux).
 
 ### 5.5 Zone
 `Zone = DeptExp & (Pays_dest=="FR" ? "France" : "étranger") & pad2(DeptDest)` — ex. `21France78`, `21étranger10` (BE).
@@ -214,7 +215,8 @@ TVA 20 % et TTC : 17 320,79 € (F...122) + 392,72 € (F...123).
 - **Encodage** : lire en latin-1 (pas UTF-8) ; **mapper les colonnes par INDEX**, pas par libellé (accents cassés + espaces de garde ` Zone `).
 - **Décimale** : `,` → `.` au parsing, et `.` → `,` à l'écriture de l'import.
 - **Exclure les lignes à tracking vide** (sinon +3 lignes et **faux gazole de 1 425,38 €**). Critère = « tracking vide », PAS « ligne gazole ».
-- **Ne jamais regrouper/dédupliquer par tracking** (fusionnerait les 7 paires inter-fichiers).
+- **Regrouper par tracking en ADDITIONNANT les postes** (depuis le 2026-11-10, cf. 5.4) — jamais dédupliquer en supprimant une ligne.
+- **Titres du CSV recopiés en ligne 1 de « Fichier Kuehne »** (depuis le 2026-11-10) : K&N ajoute parfois une colonne en fin de CSV (`T_GENERIQUE2` en octobre 2026, 184 colonnes au lieu de 183) ; sans titre, Excel refuse de reconstruire le TCD et le serveur livre un classeur de secours.
 - **Zone `0France00`** = lookup échoué → prévoir fallback/alerte.
 - **Padding** : seul le dept destinataire est paddé sur 2 chiffres.
 - **Nouveau code `T_*`** → tombe dans Frêt : prévoir une alerte sur codes inconnus.

@@ -272,3 +272,19 @@ Remontée utilisateur : les alertes affichées (POIDS=0 etc.) doivent être calc
 - `facturation-app/server.js` : `validate()` est désormais appelé **après** `writeImportCsv(rowsForImport, impCsvPath)`, en relisant `impCsvPath` depuis le disque via `readImportCsvFinal()` — remplace l'ancien appel (fait juste avant l'écriture, sur les données en mémoire). S'applique à **tous les transporteurs**, pas seulement ceux avec `importFromWorkbook`.
 
 **Testé** : round-trip `writeImportCsv` → `readImportCsvFinal` validé isolément (types numériques/dates correctement reconstruits). Validé end-to-end sur UPS juillet 2026 réel : résultat identique (230 alertes) à l'ancien mécanisme — confirme que les deux étaient déjà cohérents, mais la garantie est désormais structurelle (le fichier réellement écrit fait foi) plutôt que fortuite.
+
+## Kuehne — une seule ligne d'import par envoi (2026-11-10)
+
+Demande utilisateur : « faut regrouper les lignes d'un même envoi ». K&N facture le fret d'un envoi sur la facture transport et les frais en plus (colis volumineux 10 €, adresse particulier 8 €, T_PRS 30 €…) sur la facture « événements », avec le même tracking. Jusqu'ici le CSV d'import reprenait 1 ligne brute = 1 ligne (fidèle au fichier fait main de juin), et l'ERP signalait ces paires en avarie « doublon fichier » à fusionner à la main (14 paires en octobre 2026, 5 en septembre, 3 en août, 1 en juillet).
+
+**Implémentation** : `facturation-app/src/carriers/kuehne/index.js`, `regrouperParEnvoi()` — on garde la ligne qui porte le fret (identité : nom, pays, zone, colis, poids, Réf.1, identiques sur les 2 lignes dans les 23 cas observés) et on additionne les 7 postes en euros. Total inchangé. Un frais dont le fret a été facturé un mois précédent reste seul (rien à regrouper).
+
+**Non changé** : le classeur Excel (TCD et Kuehne_Import, une ligne par tracking et par facture, utile au contrôle PDF) garde les 2 lignes.
+
+**Testé** : octobre 2026 réel 252 → 238 lignes, total 12 561,82 € identique, 224 lignes non concernées identiques à l'ancien fichier, 14 paires additionnées correctement ; juin 2026 187 → 180 lignes, total 13 335,88 € identique.
+
+## Kuehne — classeur de secours en octobre 2026 : nouvelle colonne CSV sans titre (2026-11-10)
+
+La génération Kuehne d'octobre 2026 a livré le classeur simplifié de secours (`classeurClone:false`) au lieu du modèle. Cause : K&N a ajouté une colonne en fin de CSV (`T_GENERIQUE2`, vide en octobre) ; la ligne 1 du modèle n'avait pas de titre à cet endroit et Excel refuse un TCD dont une colonne source n'a pas de titre (`ChangePivotCache` : « Le nom du champ de tableau croisé dynamique n'est pas valide », même erreur que UPS le 2026-11-09).
+
+**Fix** : `automatisation/finaliser_kuehne.py` recopie les titres du CSV en ligne 1 de « Fichier Kuehne » (identiques au modèle pour les 183 colonnes connues). `T_GENERIQUE2` n'est classé dans aucun poste : s'il porte un jour un montant, le carrier JS l'affiche déjà en avertissement « Code tarifaire NON classé ».

@@ -40,6 +40,31 @@ function toImportRow(rec, dateValidite) {
   };
 }
 
+// Postes en euros additionnes quand un meme envoi est regroupe (cf. regrouperParEnvoi).
+const MONTANT_KEYS = ['DroitsTaxes', 'Assurance', 'ZonesEloignees', 'ColisVolumineux', 'Adresses', 'Fret', 'PlusValueB2C'];
+
+/**
+ * Une seule ligne d'import par envoi. Decision utilisateur 2026-11-10 : K&N facture le fret
+ * sur la facture transport et les frais en plus (colis volumineux, adresse particulier...) sur
+ * la facture "evenements", avec le MEME tracking -> 2 lignes dans l'import, que l'ERP signale en
+ * avarie "doublon fichier" (fusion a la main). On garde la ligne qui porte le fret (identite :
+ * poids, colis, zone, nom) et on y additionne les postes des autres lignes : total inchange.
+ */
+function regrouperParEnvoi(importRows) {
+  const parTracking = new Map();
+  for (const row of importRows) {
+    if (!parTracking.has(row.Tracking)) parTracking.set(row.Tracking, []);
+    parTracking.get(row.Tracking).push(row);
+  }
+  return [...parTracking.values()].map((lignes) => {
+    if (lignes.length === 1) return lignes[0];
+    const base = lignes.reduce((a, b) => ((Number(b.Fret) || 0) > (Number(a.Fret) || 0) ? b : a));
+    const fusion = { ...base };
+    for (const k of MONTANT_KEYS) fusion[k] = round2(lignes.reduce((s, r) => s + (Number(r[k]) || 0), 0));
+    return fusion;
+  });
+}
+
 /**
  * Traite les fichiers Kuehne d'un mois.
  * @param {object} files { csv:[paths], pdf:[paths] }
@@ -87,12 +112,13 @@ function process(files) {
     };
   });
 
-  // 4. Import = 1 ligne par fiche AVEC tracking (exclusion tracking vide), aucun regroupement
+  // 4. Import = 1 ligne par envoi AVEC tracking (exclusion tracking vide) ; les lignes d'un meme
+  // envoi (facture transport + facture evenements) sont regroupees, postes additionnes.
   const period = derivePeriod(rows, header);
   // DateValidite = 1er jour du mois de la periode reelle (deduite du CSV), jamais une
   // constante figee en config -> evite d'importer sous le mauvais mois si on oublie de la mettre a jour.
   const dateValidite = periodToDate(period) || cfg.champs_fixes.date_validite;
-  const importRows = recs.filter((rec) => rec.tracking).map((rec) => toImportRow(rec, dateValidite));
+  const importRows = regrouperParEnvoi(recs.filter((rec) => rec.tracking).map((rec) => toImportRow(rec, dateValidite)));
   const { alerts, infos } = validate(importRows);
 
   return { header, rows, recs, importRows, controle, warnings, alerts, infos, posteKeys: POSTE_KEYS, cfg, period, sheetNames: { raw: 'Fichier Kuehne', import: 'Kuehne_Import' } };
@@ -130,7 +156,7 @@ module.exports = {
     template: '../Transporteurs/Kuehne/2026_06_Facture Kuehne.xlsx',
     buildArgs: (files) => ['--csv', ...(files.csv || []), '--pdf', ...(files.pdf || [])],
   },
-  method: "Flux EDI. K&N fournit 2 CSV (facture transport + facture evenements) et 2 PDF. Reclassement ~130 colonnes T_* -> 8 postes, 1 ligne CSV = 1 ligne import (pas de regroupement), gazole refacture a part.",
+  method: "Flux EDI. K&N fournit 2 CSV (facture transport + facture evenements) et 2 PDF. Reclassement ~130 colonnes T_* -> 8 postes, 1 ligne import par envoi (fret + frais de la facture evenements regroupes), gazole refacture a part.",
   inputs: [
     { key: 'csv', label: 'Fichiers CSV K&N (FcCSV*.csv)', accept: '.csv', multiple: true, required: true, match: 'FcCSV' },
     { key: 'pdf', label: 'Factures PDF (IMAGE*.pdf) — pour reconciliation', accept: '.pdf', multiple: true, required: false },

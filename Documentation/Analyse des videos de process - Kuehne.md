@@ -63,7 +63,7 @@ C'est là que se fait la **refacturation au client** (prix de vente, marge/écar
 - **Détection** : au sein d'une même période / transporteur / client, **grouper par n° de tracking**. Si un tracking apparaît sur **≥ 2 lignes** ⇒ `DOUBLON_PRESTATION`. Signature typique : le **frêt sur une ligne** et **une surcharge seule sur l'autre** (poids/zone identiques).
 - **Correction** : conserver **1 ligne par tracking**, **sommer les postes de charge** des doublons (Frêt, Zone éloignée, Assurance, Droits & taxes, Colis volumineux…), **recalculer** Taxe gasoil (sur frêt consolidé), **PV Frêt** (grille tarifaire) et **Écart**. Facturer le client **une seule fois**.
 
-> ⚠️ À ne pas confondre avec le reclassement *achat* (doc maîtresse) : la fusion « 1 ligne par tracking » est une opération **côté VENTE/SI**, alors que l'export d'**achat** reste **1 ligne CSV = 1 ligne import** (aucun regroupement).
+> ⚠️ Mise à jour 2026-11-10 : la fusion « 1 ligne par tracking » est désormais faite **dès le CSV d'import** (postes additionnés, cf. doc maîtresse § 5.4), ce qui évite l'avarie « doublon fichier » pour les paires du même mois. Un frais « événements » dont le fret a été facturé un mois précédent reste seul sur sa ligne et se traite toujours dans le SI.
 
 ---
 

@@ -223,6 +223,12 @@ def main():
             ws.Range(ws.Cells(2, FIRST_RAW_COL), ws.Cells(oldLast, lastRawCol)).ClearContents()
         # 2) coller le bloc de donnees brutes en un seul appel (rapide)
         ws.Range(ws.Cells(2, FIRST_RAW_COL), ws.Cells(newLast, lastRawCol)).Value = data
+        # BUG TROUVE 2026-11-10 (generation d'octobre 2026 : classeur de secours au lieu du modele) :
+        # K&N a ajoute une colonne en fin de CSV ("T_GENERIQUE2", 184 colonnes au lieu de 183) ; la
+        # ligne 1 du modele n'avait pas de titre a cet endroit et Excel refuse un TCD dont une colonne
+        # source n'a pas de titre (ChangePivotCache plus bas). On recopie donc aussi les titres du CSV
+        # en ligne 1 (identiques a ceux du modele pour les 183 colonnes deja connues).
+        ws.Range(ws.Cells(1, FIRST_RAW_COL), ws.Cells(1, lastRawCol)).Value = [hdr]
         # 3) etendre les formules calculees A..L jusqu'a la derniere ligne
         ws.Range(ws.Cells(2, 1), ws.Cells(newLast, 12)).FillDown()
         # 4) si moins de lignes que le mois precedent : effacer le surplus
