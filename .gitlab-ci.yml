@@ -5,3 +5,17 @@
 # roles Owner/Maintainer/security manager -- ajoute directement ici a la place.
 include:
   - template: Jobs/Secret-Detection.gitlab-ci.yml
+
+# DESACTIVE tant qu'aucun runner Docker n'est assigne au projet (constat 2026-11-10).
+# - Le job du modele s'execute dans une image Docker. Le seul runner du parc
+#   (vm-app-shell) est en executeur shell : il ignore l'image, l'analyseur n'existe
+#   pas sur la VM, et le job echouait -- d'ou les pipelines en "Warning" qui ne
+#   scannaient rien.
+# - Sans aucun runner assigne, chaque push laissait un pipeline en "stuck".
+# Sans job, GitLab ne cree plus de pipeline au push.
+#
+# Pour REACTIVER une fois un runner Docker disponible (de groupe ou de projet) :
+# Settings > CI/CD > Variables, ajouter SECRET_DETECTION_DISABLED = false.
+# Une variable de projet ou de groupe l'emporte sur celle-ci, sans toucher au fichier.
+variables:
+  SECRET_DETECTION_DISABLED: "true"
