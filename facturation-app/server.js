@@ -366,6 +366,25 @@ app.get('/api/history', (req, res) => {
   }
 });
 
+// Suivi de la page d'accueil (demande utilisateur 2026-11-10) : pour une periode AAAA_MM, etat de
+// la derniere generation de chaque transporteur (outputs/<id>_<periode>/run.json, le meme dossier
+// que celui de la generation), sans le detail des alertes -- l'historique complet reste sur
+// /api/history.
+app.get('/api/suivi', (req, res) => {
+  const periode = String(req.query.periode || '');
+  if (!/^\d{4}_\d{2}$/.test(periode)) return res.status(400).json({ error: 'Période invalide (attendu AAAA_MM).' });
+  const suivi = {};
+  for (const c of registry.list()) {
+    const runPath = path.join(OUTPUTS, `${c.id}_${periode}`, 'run.json');
+    if (!fs.existsSync(runPath)) continue;
+    try {
+      const r = JSON.parse(fs.readFileSync(runPath, 'utf8'));
+      suivi[c.id] = { statut: r.statut, timestamp: r.timestamp, lignes: r.lignes, totalHt: r.totalHt, alertes: (r.alerts || []).length };
+    } catch (e) { /* run.json illisible : transporteur affiche comme non genere */ }
+  }
+  res.json({ periode, suivi });
+});
+
 // Démarrage robuste : si le port est occupé (app déjà lancée ?), on essaie le suivant.
 function start(port, attemptsLeft = 10) {
   const server = app.listen(port, () => console.log(`Facturation transporteurs -> http://localhost:${port}`));

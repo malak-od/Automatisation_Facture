@@ -44,7 +44,6 @@
   .badge { font-size:10px; padding:2px 7px; border-radius:999px; font-weight:600; }
   .badge.ready { background:rgba(34,197,94,.15); color:var(--ok); }
   .badge.planned { background:rgba(71,85,105,.35); color:#94a3b8; }
-  .badge.viti { background:rgba(56,189,248,.15); color:var(--accent); }
   .card { background:linear-gradient(165deg, var(--panel), var(--bg2)); border:1px solid var(--line); border-radius:14px;
           padding:20px 22px; margin-bottom:16px; box-shadow:0 8px 24px -12px rgba(0,0,0,.5);
           animation: rise .45s cubic-bezier(.2,.8,.2,1) both; }
@@ -135,6 +134,19 @@
   .month-field select { background:#0b1222; color:var(--fg); border:1px solid var(--line); border-radius:8px;
                          padding:9px 12px; font-size:14px; min-width:160px; cursor:pointer; transition:border-color .15s ease; }
   .month-field select:hover, .month-field select:focus { border-color:var(--accent); outline:none; }
+  .history-filters { display:flex; flex-wrap:wrap; gap:0 16px; margin-top:12px; }
+
+  /* Suivi par periode sur l'accueil (2026-11-10) */
+  .home-periode { display:flex; flex-direction:column; align-items:center; text-align:center; margin:-12px 0 26px; }
+  .home-periode .kv { margin-top:-6px; }
+  .tile.done { border-color:rgba(34,197,94,.55); }
+  .tile.failed { border-color:rgba(239,68,68,.55); }
+  .tile-suivi { display:flex; gap:5px; flex-wrap:wrap; justify-content:center; min-height:18px; }
+  .suivi { font-size:10.5px; font-weight:600; padding:2px 8px; border-radius:999px; }
+  .suivi.ok { background:rgba(34,197,94,.15); color:var(--ok); }
+  .suivi.ko { background:rgba(239,68,68,.15); color:#f87171; }
+  .suivi.todo { background:rgba(71,85,105,.35); color:#94a3b8; }
+  .suivi.warn { background:rgba(245,158,11,.15); color:var(--warn); }
 </style>
 </head>
 <body>
@@ -199,18 +211,72 @@ function goHome() {
   current = null;
   const m = document.getElementById('main');
   const tiles = CARRIERS.map((c, i) => `
-    <div class="tile" style="animation-delay:${Math.min(i*35,350)}ms" onclick="select('${c.id}')" tabindex="0"
+    <div class="tile" id="tile-${c.id}" style="animation-delay:${Math.min(i*35,350)}ms" onclick="select('${c.id}')" tabindex="0"
          onkeydown="if(event.key==='Enter')select('${c.id}')">
       ${logoOrBadge(c)}
       <div class="tile-name">${c.name}</div>
-      <div class="tile-tags">
-        ${c.viticolis?'<span class="badge viti">Viticolis</span>':''}
-        <span class="badge ${c.status}">${c.status==='ready'?'prêt':'à venir'}</span>
-      </div>
+      ${c.status !== 'ready' ? `<div class="tile-tags"><span class="badge ${c.status}">à venir</span></div>` : ''}
+      <div class="tile-suivi" id="suivi-${c.id}"></div>
     </div>`).join('');
   m.innerHTML = `<div class="home"><h2>Choisir un transporteur</h2>
     <span class="home-sub">Génère le fichier d'import et le classeur de facturation à partir des documents reçus</span>
+    <div class="home-periode month-field"><label for="home-periode">Période de facturation</label>
+      <select id="home-periode" onchange="changerPeriode(this.value)">${monthOptions(PERIODE)}</select>
+      <div class="kv" id="suivi-resume"></div>
+    </div>
     <div class="grid">${tiles}</div></div>`;
+  chargerSuivi();
+}
+
+// Suivi par periode (demande utilisateur 2026-11-10) : la periode choisie sur l'accueil est celle
+// de TOUS les transporteurs (reprise par le "Mois de facturation" de chaque page transporteur), et
+// chaque tuile indique si le dossier de cette periode a deja ete genere (dernier run.json).
+function changerPeriode(p) {
+  PERIODE = p;
+  chargerSuivi();
+}
+
+let suiviDemande = 0;
+async function chargerSuivi() {
+  const demande = ++suiviDemande;
+  const periode = PERIODE;
+  const resume = () => document.getElementById('suivi-resume');
+  let suivi;
+  try {
+    const res = await fetch(`/api/suivi?periode=${encodeURIComponent(periode)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Erreur');
+    suivi = data.suivi || {};
+  } catch (e) {
+    if (resume()) resume().textContent = `Suivi indisponible : ${e.message}`;
+    return;
+  }
+  // Reponse arrivee apres un autre choix de periode, ou apres avoir quitte l'accueil : ignoree.
+  if (demande !== suiviDemande || !resume()) return;
+  const prets = CARRIERS.filter((c) => c.status === 'ready');
+  for (const c of CARRIERS) {
+    const tile = document.getElementById(`tile-${c.id}`);
+    const zone = document.getElementById(`suivi-${c.id}`);
+    if (!tile || !zone) continue;
+    const s = suivi[c.id];
+    tile.classList.remove('done', 'failed');
+    if (!s) {
+      zone.innerHTML = c.status === 'ready' ? '<span class="suivi todo">À faire</span>' : '';
+      continue;
+    }
+    const date = s.timestamp ? new Date(s.timestamp).toLocaleDateString('fr-FR') : '';
+    if (s.statut === 'erreur') {
+      tile.classList.add('failed');
+      zone.innerHTML = `<span class="suivi ko">❌ Erreur le ${date}</span>`;
+      continue;
+    }
+    tile.classList.add('done');
+    zone.innerHTML = `<span class="suivi ok">✅ Généré le ${date}</span>${s.alertes ? `<span class="suivi warn">${s.alertes} alerte(s)</span>` : ''}`;
+  }
+  const faits = prets.filter((c) => suivi[c.id] && suivi[c.id].statut !== 'erreur');
+  const reste = prets.filter((c) => !faits.includes(c)).map((c) => c.name);
+  resume().innerHTML = `<b>${faits.length} / ${prets.length}</b> transporteurs générés pour ${periode.replace('_',' ')}`
+    + (reste.length ? ` · reste : ${reste.join(', ')}` : ' · tout est fait ✅');
 }
 
 // En-tête "logo/badge + nom" de la page de detail -- meme repli logo -> badge colore que sur
@@ -236,26 +302,24 @@ function headLogoFallback(img) {
 // sert a la verification visuelle avant envoi, la vraie periode utilisee pour nommer les
 // fichiers reste calculee cote carrier depuis le contenu des documents deposes (voir
 // d.periode affiche dans le resultat).
-function monthOptions() {
+// Preselection = mois PRECEDENT (M-1) -- demande utilisateur 2026-08-25 : on facture toujours
+// les expeditions du mois d'avant (ex. en aout on facture juillet, en septembre on facture
+// aout, etc.), jamais le mois courant. Gere le cas janvier -> decembre de l'annee precedente.
+function moisPrecedent() {
   const now = new Date();
-  const year = now.getFullYear();
-  const currentMonth = now.getMonth() + 1;
-  // Preselection = mois PRECEDENT (M-1) -- demande utilisateur 2026-08-25 : on facture toujours
-  // les expeditions du mois d'avant (ex. en aout on facture juillet, en septembre on facture
-  // aout, etc.), jamais le mois courant. Gere le cas janvier -> decembre de l'annee precedente
-  // (peut sortir de la liste des 12 mois de "year" affichee ci-dessous, cf. option ajoutee a part).
-  const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
-  const prevYear = currentMonth === 1 ? year - 1 : year;
-  const prevVal = `${prevYear}_${String(prevMonth).padStart(2,'0')}`;
-  const opts = [];
-  if (prevYear !== year) {
-    opts.push(`<option value="${prevVal}" selected>${prevVal.replace('_',' ')}</option>`);
-  }
-  for (let m = 1; m <= 12; m++) {
-    const val = `${year}_${String(m).padStart(2,'0')}`;
-    opts.push(`<option value="${val}" ${val===prevVal?'selected':''}>${val.replace('_',' ')}</option>`);
-  }
-  return opts.join('');
+  const m = now.getMonth(); // 0 = janvier -> mois precedent = decembre de l'annee d'avant
+  return m === 0 ? `${now.getFullYear() - 1}_12` : `${now.getFullYear()}_${String(m).padStart(2, '0')}`;
+}
+// Periode de facturation commune a tous les transporteurs (2026-11-10) : choisie sur l'accueil,
+// reprise par le "Mois de facturation" de chaque page transporteur (et inversement).
+let PERIODE = moisPrecedent();
+
+function monthOptions(selected = PERIODE) {
+  const year = new Date().getFullYear();
+  const vals = [moisPrecedent(), selected];
+  for (let m = 1; m <= 12; m++) vals.push(`${year}_${String(m).padStart(2,'0')}`);
+  return [...new Set(vals.filter(Boolean))].sort()
+    .map((v) => `<option value="${v}" ${v === selected ? 'selected' : ''}>${v.replace('_',' ')}</option>`).join('');
 }
 
 function select(id) {
@@ -276,7 +340,7 @@ function render() {
 
   html += `<div class="card"><h3>1. Déposer les documents fournis par ${c.name}</h3><form id="form">
     <div class="month-field"><label>Mois de facturation</label>
-      <select id="month-select">${monthOptions()}</select>
+      <select id="month-select" onchange="PERIODE = this.value">${monthOptions(PERIODE)}</select>
     </div>`;
   for (const inp of c.inputs) {
     if (inp.multiple) {
@@ -452,6 +516,11 @@ async function enregistrerSurPoste(stamp) {
 // (un run.json par transporteur+periode, ecrit cote serveur a chaque generation), du plus
 // recent au plus ancien, avec leurs alertes/infos deja calculees -- evite de devoir deviner
 // quel fichier de sortie correspond a quel run via les timestamps.
+// Filtres par periode et par transporteur (demande utilisateur 2026-11-10) : appliques dans la
+// page sur la liste deja chargee (un seul run par transporteur+periode, liste courte).
+let HISTORIQUE = [];
+const nomTransporteur = (r) => (CARRIERS.find((c) => c.id === r.carrierId) || {}).name || r.carrier || r.carrierId || '?';
+
 async function showHistory() {
   current = null;
   const m = document.getElementById('main');
@@ -473,10 +542,38 @@ async function showHistory() {
       <div class="card"><h3>🕘 Historique des générations</h3><p class="kv">Aucune génération enregistrée pour l'instant.</p></div>`;
     return;
   }
+  HISTORIQUE = runs;
+  const periodes = [...new Set(runs.map((r) => r.periode).filter(Boolean))].sort().reverse();
+  const transporteurs = [...new Map(runs.filter((r) => r.carrierId).map((r) => [r.carrierId, nomTransporteur(r)])).entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]));
+  m.innerHTML = `<button class="back" onclick="goHome()">← Retour</button>
+    <div class="card"><h3>🕘 Historique des générations</h3>
+      <div class="history-filters">
+        <div class="month-field"><label for="filtre-periode">Période</label>
+          <select id="filtre-periode" onchange="afficherHistorique()"><option value="">Toutes</option>${periodes.map((p) => `<option value="${p}">${p.replace('_',' ')}</option>`).join('')}</select>
+        </div>
+        <div class="month-field"><label for="filtre-transporteur">Transporteur</label>
+          <select id="filtre-transporteur" onchange="afficherHistorique()"><option value="">Tous</option>${transporteurs.map(([id, nom]) => `<option value="${id}">${nom}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div class="kv" id="compte-historique"></div>
+    </div>
+    <div id="liste-historique"></div>`;
+  afficherHistorique();
+}
+
+function afficherHistorique() {
+  const periode = document.getElementById('filtre-periode').value;
+  const transporteur = document.getElementById('filtre-transporteur').value;
+  const runs = HISTORIQUE.filter((r) => (!periode || r.periode === periode) && (!transporteur || r.carrierId === transporteur));
+  const filtre = periode || transporteur;
+  document.getElementById('compte-historique').textContent = filtre
+    ? `${runs.length} génération(s) sur ${HISTORIQUE.length}, la plus récente en premier.`
+    : `${HISTORIQUE.length} génération(s) enregistrée(s), la plus récente en premier.`;
   const cards = runs.map((r) => {
     const isErr = r.statut === 'erreur';
     const dateStr = r.timestamp ? new Date(r.timestamp).toLocaleString('fr-FR') : '';
-    const nomTransp = r.carrier || r.carrierId || '?';
+    const nomTransp = nomTransporteur(r);
     if (isErr) {
       return `<div class="card"><h3>❌ ${nomTransp}${r.periode ? ' — ' + r.periode.replace('_',' ') : ''}</h3>
         <div class="kv">${dateStr}</div>
@@ -490,9 +587,8 @@ async function showHistory() {
       ${infos.length ? `<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">ℹ️ ${infos.length} info(s)</summary><div class="alerts" style="color:#7dd3fc">${infos.map(a=>`<div>${a}</div>`).join('')}</div></details>` : ''}
     </div>`;
   }).join('');
-  m.innerHTML = `<button class="back" onclick="goHome()">← Retour</button>
-    <div class="card"><h3>🕘 Historique des générations</h3><div class="kv">${runs.length} génération(s) enregistrée(s), la plus récente en premier.</div></div>
-    ${cards}`;
+  document.getElementById('liste-historique').innerHTML = cards
+    || '<div class="card"><p class="kv">Aucune génération pour ce choix de période et de transporteur.</p></div>';
 }
 
 load();

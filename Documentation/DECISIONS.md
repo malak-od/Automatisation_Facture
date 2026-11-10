@@ -296,3 +296,13 @@ Demande utilisateur : le bouton du résultat ne doit plus produire un .zip, et l
 **Implémentation** :
 - `facturation-app/public/index.html` : bouton « Enregistrer sur mon poste » (`enregistrerSurPoste`). Sur Edge/Chrome (site en HTTPS ou localhost), la personne choisit un dossier de son poste (le navigateur le repropose la fois suivante) et les fichiers y sont écrits dans un sous-dossier `<transporteur>_<AAAA_MM>`, sans zip. Sinon, repli : un téléchargement par fichier dans le dossier Téléchargements du poste. Un navigateur ne peut pas ouvrir l'Explorateur Windows lui-même.
 - `facturation-app/server.js` : routes `/api/download-zip` et `/api/reveal` supprimées, ainsi que la copie automatique des fichiers dans le dossier Téléchargements **du serveur** (en prod, celui de la VM, invisible pour l'utilisateur). Les fichiers restent servis un par un via `/outputs/<stamp>/<nom>`. La dépendance `archiver` n'est plus utilisée (laissée dans `package.json`).
+
+## Accueil : période de facturation commune + suivi des transporteurs générés (2026-11-10)
+
+Demande utilisateur : choisir la période de facturation sur la page d'accueil (même période pour tous les transporteurs) et marquer les transporteurs dont le dossier de cette période a été généré, pour avoir un suivi.
+
+**Implémentation** :
+- `facturation-app/public/index.html` : liste « Période de facturation » sur l'accueil (M-1 par défaut, comme avant). Elle est reprise par le « Mois de facturation » de chaque page transporteur, et inversement. Chaque tuile affiche « ✅ Généré le JJ/MM/AAAA » (+ nombre d'alertes), « ❌ Erreur le … » ou « À faire », avec un résumé « N / 13 transporteurs générés · reste : … ». Historique : filtres par période et par transporteur, appliqués dans la page.
+- `facturation-app/server.js` : nouvelle route `GET /api/suivi?periode=AAAA_MM`, qui lit `outputs/<transporteur>_<période>/run.json` pour chaque transporteur (statut, date, lignes, total, nombre d'alertes).
+
+**À savoir** : le suivi montre la **dernière** génération de la période. Une génération en erreur réécrit le `run.json` du même dossier : la tuile passe à « Erreur » même si une génération précédente avait réussi (les fichiers de celle-ci restent dans le dossier).
