@@ -98,8 +98,170 @@ function readBrut(p) {
   const ws = wb.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
   const header = (rows[0] || []).map((h) => String(h || '').trim());
+  // FACMAG passe par Excel (constate le 2026-11-10 : CSV ouvert puis enregistre en .xlsx) : les
+  // numeros de suivi et d'envoi y sont arrondis par Excel (7520240000000000 au lieu de
+  // 7520236028138204), donc inutilisables -- message clair plutot qu'un "0 ligne" silencieux.
+  if (colIndexByName(header, 'Bon de transport') >= 0) {
+    throw new Error('Fichier FACMAG enregistré au format Excel : les numéros de suivi y sont arrondis par Excel et ne sont plus utilisables. Déposez le fichier FACMAG.CSV tel que téléchargé chez TNT (sans l\'ouvrir dans Excel), ou le détail facture Excel (feuille DET_FAC).');
+  }
   const data = rows.slice(1).filter((r) => r.some((v) => v !== ''));
   return { file: path.basename(p), header, rows: data };
+}
+
+// ---------------------------------------------------------------------------------------------
+// FACMAG (export CSV TNT, decision utilisateur 2026-11-10) : autre format de la meme facture --
+// 1 ligne par colis ou par envoi, frais en COLONNES (SFU, TMC, FACTOR_FOR, CNM...), au lieu du
+// "detail facture" (feuille DET_FAC, 1 ligne par evenement ENV/COL/CPC/CPE/EXP). Converti ici
+// au format DET_FAC, ecrit dans un .xlsx a cote du fichier recu : le reste du carrier ET le
+// finaliseur Excel (via files.facture, cf. process) le lisent comme un detail facture, sans autre
+// changement. Correspondance (verifiee sur octobre 2026 : total 1 690,64 EUR = TOTAL GENERAL PDF) :
+//  - ligne SANS "Bon de transport" (envoi de plusieurs colis) ou colis unique ("Nb colis dans
+//    l'envoi" = 1) -> ligne ENV (montant = "Prix h.t. du transport", poids de la ligne)
+//  - ligne AVEC "Bon de transport" -> ligne COL (id colis = bon de transport, poids du colis)
+//  - chaque colonne de frais non nulle -> ligne CPC (colis) / CPE (envoi), code complement = nom
+//    de la colonne ; SAUF "SFU" (surcharge carburant) -> cumulee en 1 ligne EXP/SURCH_CARB par
+//    compte, comme dans le detail facture (jamais repercutee au client)
+// Champs texte au format du detail facture recu en septembre 2026 (apostrophe de tete sur
+// compte/id colis/departement/code postal, numero envoi prefixe "E").
+// ---------------------------------------------------------------------------------------------
+const ENTETE_DET_FAC = ['Mois de Facturation', 'Indicatif Facture', 'Numero de Facture', 'Compte Expediteur', 'Client Facturé',
+  'Ligne Facture', 'id colis', 'date Expedition', 'numero envoi', 'code Produit', 'poids colis', 'code complement', 'montant HT',
+  'raison sociale expéditeur', 'adresse 1', 'adresse 2', 'pays', 'departement', 'code postal', 'ville',
+  'raison sociale destinataire', 'adresse 1', 'adresse 2', 'pays', 'departement', 'code postal', 'ville'];
+const CODE_CARBURANT_FACMAG = 'SFU';
+
+function premiereLigneTexte(p) {
+  const fs = require('fs');
+  const fd = fs.openSync(p, 'r');
+  try {
+    const buf = Buffer.alloc(4096);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, n).toString('latin1').split(/\r?\n/)[0];
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function estFacmagCsv(p) {
+  if (isXlsx(p)) return false;
+  const l = premiereLigneTexte(p);
+  return /Bon de transport/i.test(l) && /envoi/i.test(l);
+}
+
+/** CSV a guillemets (les montants FACMAG "00000001,00" contiennent le separateur virgule). */
+function lireCsvGuillemets(texte, sep) {
+  const lignes = [];
+  let ligne = [];
+  let champ = '';
+  let entre = false;
+  for (let i = 0; i < texte.length; i++) {
+    const c = texte[i];
+    if (entre) {
+      if (c !== '"') champ += c;
+      else if (texte[i + 1] === '"') { champ += '"'; i++; } else entre = false;
+    } else if (c === '"') entre = true;
+    else if (c === sep) { ligne.push(champ); champ = ''; } else if (c === '\r' || c === '\n') {
+      if (c === '\r' && texte[i + 1] === '\n') i++;
+      ligne.push(champ); lignes.push(ligne); ligne = []; champ = '';
+    } else champ += c;
+  }
+  if (champ !== '' || ligne.length) { ligne.push(champ); lignes.push(ligne); }
+  return lignes;
+}
+
+function convertirFacmag(p, warnings, infos) {
+  const texte = require('fs').readFileSync(p).toString('latin1');
+  const l0 = texte.split(/\r?\n/)[0];
+  const sep = (l0.match(/;/g) || []).length > (l0.match(/,/g) || []).length ? ';' : ',';
+  const lignes = lireCsvGuillemets(texte, sep);
+  const h = lignes[0].map((x) => String(x || '').trim());
+  const col = (nom) => colIndexByName(h, nom);
+  const i = {
+    mois: col('Année mois'), facture: col('N° facture'), compte: col('N° compte expéditeur'), date: col('Date expédition colis'),
+    envoi: col('N° envoi'), fa: col('Facture(F) ou avoir(A)'), compteFact: col('N° compte facturé'), bt: col('Bon de transport'),
+    poids: col('Poids'), service: col('Service'), nbColis: col("Nb colis dans l'envoi"), montant: col('Montant h.t. Total'),
+    transport: col('Prix h.t. du transport'), options: col('Montant h.t.options et surcharges Total'),
+  };
+  const manquantes = Object.entries(i).filter(([, v]) => v < 0).map(([k]) => k);
+  if (manquantes.length) throw new Error(`Fichier FACMAG : colonne(s) introuvable(s) (${manquantes.join(', ')}).`);
+  const adr = ['Raison sociale expéditeur', 'Adresse 1 expéditeur', 'Adresse 2 expéditeur', 'Pays expéditeur', 'Département expéditeur', 'CP expéditeur', 'Ville expéditeur',
+    'Raison Sociale destinataire', 'Adresse 1 destinataire', 'Adresse 2 destinataire', 'Pays destinataire', 'Département destinataire', 'CP destinataire', 'Ville destinataire'].map(col);
+  // Colonnes de frais : toutes celles apres "Montant h.t.options et surcharges Total".
+  const codes = h.map((nom, j) => [j, nom]).filter(([j, nom]) => j > i.options && nom);
+  const donnees = lignes.slice(1).filter((r) => r.length > i.options);
+
+  const abime = donnees.find((r) => /[eE]\+\d+$|,/.test(String(r[i.bt] || '').trim()) || /[eE]\+\d+$|,/.test(String(r[i.envoi] || '').trim()));
+  if (abime) {
+    throw new Error(`Fichier FACMAG abîmé : il a été ouvert puis enregistré dans Excel, qui a arrondi les numéros de suivi/d'envoi (ex. "${String(abime[i.bt] || abime[i.envoi]).trim()}"). Déposez le fichier FACMAG.CSV tel que téléchargé chez TNT, sans l'ouvrir dans Excel.`);
+  }
+
+  const vide16 = `'${' '.repeat(16)}`;
+  const base = (r) => {
+    const facture = String(r[i.facture] || '').trim();
+    return [Number(String(r[i.mois]).trim()) || String(r[i.mois]).trim(), Number(facture.slice(0, 2)) || '', Number(facture.slice(2)) || facture,
+      `'${r[i.compte]}`, `'${r[i.compteFact]}`];
+  };
+  const adresses = (r) => adr.map((j, k) => ([4, 5, 11, 12].includes(k) ? `'${r[j] ?? ''}` : (r[j] ?? '')));
+  const ligneDet = (r, type, idColis, codeProduit, poids, code, montant) => [...base(r), type, idColis ? `'${idColis}` : vide16,
+    Number(String(r[i.date]).trim()) || 0, `E${String(r[i.envoi]).trim()}`, codeProduit, poids, (code || '').padEnd(10), montant, ...adresses(r)];
+
+  const parEnvoi = new Map(); // numero envoi -> { env: {r, poids, transport} | null, lignes: [] }
+  const carburantParCompte = new Map();
+  let nAvoir = 0;
+  const incoherentes = [];
+  for (const r of donnees) {
+    const envoiNum = String(r[i.envoi] || '').trim();
+    if (!envoiNum) continue;
+    if (!parEnvoi.has(envoiNum)) parEnvoi.set(envoiNum, { env: null, lignes: [] });
+    const e = parEnvoi.get(envoiNum);
+    const bt = String(r[i.bt] || '').trim();
+    const poids = num(r[i.poids]);
+    const transport = num(r[i.transport]);
+    const service = String(r[i.service] || '').trim();
+    if (String(r[i.fa] || '').trim().toUpperCase() === 'A') nAvoir++;
+    if (!bt || num(r[i.nbColis]) >= 1 || transport !== 0) {
+      if (e.env) { e.env.transport = round2(e.env.transport + transport); e.env.poids = Math.max(e.env.poids, poids); } else e.env = { r, poids, transport, service };
+    }
+    if (bt) e.lignes.push(ligneDet(r, 'COL', bt, service, poids, '', 0));
+    let sommeFrais = 0;
+    for (const [j, code] of codes) {
+      const m = num(r[j]);
+      if (!m) continue;
+      sommeFrais = round2(sommeFrais + m);
+      if (code.toUpperCase() === CODE_CARBURANT_FACMAG) {
+        const compte = String(r[i.compte] || '');
+        carburantParCompte.set(compte, { r, montant: round2(((carburantParCompte.get(compte) || {}).montant || 0) + m) });
+        continue;
+      }
+      e.lignes.push(ligneDet(r, bt ? 'CPC' : 'CPE', bt, '   ', bt ? poids : 0, code, m));
+    }
+    if (Math.abs(sommeFrais - num(r[i.options])) > 0.005 || Math.abs(round2(transport + num(r[i.options])) - num(r[i.montant])) > 0.005) {
+      incoherentes.push(bt || envoiNum);
+    }
+  }
+  const sortie = [];
+  let nColis = 0;
+  for (const e of parEnvoi.values()) {
+    if (e.env) sortie.push(ligneDet(e.env.r, 'ENV', '', e.env.service, e.env.poids, '', e.env.transport));
+    for (const l of e.lignes) { if (l[5] === 'COL') nColis++; sortie.push(l); }
+  }
+  let carburant = 0;
+  for (const [compte, { r, montant }] of carburantParCompte) {
+    carburant = round2(carburant + montant);
+    sortie.push([...base(r).slice(0, 3), `'${compte}`, `'${compte}`, 'EXP', vide16, 0, 'E00000000000000', '   ', 0, 'SURCH_CARB', montant, ...ENTETE_DET_FAC.slice(13).map(() => '')]);
+  }
+  if (incoherentes.length) {
+    warnings.push(`Fichier FACMAG : ${incoherentes.length} ligne(s) dont le total ne correspond pas au transport + frais (colonne de frais inconnue ?) — à vérifier : ${incoherentes.slice(0, 5).join(', ')}${incoherentes.length > 5 ? '…' : ''}`);
+  }
+  if (nAvoir) warnings.push(`Fichier FACMAG : ${nAvoir} ligne(s) d'avoir ("A") — montants repris tels quels, à vérifier.`);
+
+  const ws = XLSX.utils.aoa_to_sheet([ENTETE_DET_FAC, ...sortie]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'DET_FAC');
+  const chemin = `${p}_det_fac.xlsx`;
+  XLSX.writeFile(wb, chemin);
+  infos.push(`Fichier FACMAG (CSV TNT) converti au format "détail facture" : ${donnees.length} ligne(s) FACMAG -> ${sortie.length} ligne(s), ${parEnvoi.size} envoi(s), ${nColis} colis, surcharge carburant (colonne ${CODE_CARBURANT_FACMAG}) ${carburant.toFixed(2)} EUR.`);
+  return chemin;
 }
 
 /** PDF TNT (facture FedEx "services TNT") : 1 bloc par compte expediteur --
@@ -146,11 +308,15 @@ function categoriePour(codeComplement) {
 }
 
 async function process(files) {
-  const facturePaths = (files.facture || []).filter(isXlsx);
-  if (!facturePaths.length) throw new Error('Aucun fichier fourni (attendu : facture TNT reçue, xlsx).');
-
   const warnings = [];
   const infos = [];
+  // FACMAG (CSV TNT) : converti au format detail facture ; le chemin du fichier converti
+  // REMPLACE le fichier recu dans files.facture, pour que le finaliseur Excel (buildArgs, appele
+  // par le serveur apres process() avec ce meme objet files) lise exactement le meme contenu.
+  files.facture = (files.facture || []).map((p) => (estFacmagCsv(p) ? convertirFacmag(p, warnings, infos) : p));
+  const facturePaths = files.facture.filter(isXlsx);
+  if (!facturePaths.length) throw new Error('Fichier TNT non reconnu : déposez le détail facture Excel (feuille DET_FAC) ou le fichier FACMAG.CSV téléchargé chez TNT.');
+
   const brutes = facturePaths.map(readBrut);
 
   const comptageMois = new Map(); // "AAAAMM" -> nb lignes
@@ -378,12 +544,14 @@ module.exports = {
   name: 'TNT',
   status: 'ready',
   taxeGasoil: "Reelle (surcharge carburant, code complement SURCH_CARB), montant GLOBAL par compte expediteur (pas ventilee par tracking) -- PDF affiche 'taux officiel' ET 'taux reel', SEUL le taux officiel fait foi. Jamais repercutee au client dans le fichier livre, sert a la reconciliation (somme postes + surcharge = TOTAL GENERAL PDF).",
-  method: "1 fichier Excel brut (feuille DET_FAC, 1 ligne = 1 evenement, pas 1 colis) : lignes 'ENV' portent le montant de transport reel de l'ENVOI (peut regrouper plusieurs colis 'COL') -- attribue au tracking alphabetiquement le plus grand de l'envoi (reproduit LOOKUP/cle dupliquee du modele). Supplements (CPC/CPE, code complement RS/TMC/ZEL/...) reclasses en postes ERP via la table Categories. Tracking JAMAIS converti en nombre. Reconciliation PDF : somme des postes + surcharge carburant (taux officiel) = TOTAL GENERAL.",
+  method: "1 fichier Excel brut (feuille DET_FAC, 1 ligne = 1 evenement, pas 1 colis ; ou export FACMAG.CSV, converti au meme format) : lignes 'ENV' portent le montant de transport reel de l'ENVOI (peut regrouper plusieurs colis 'COL') -- attribue au tracking alphabetiquement le plus grand de l'envoi (reproduit LOOKUP/cle dupliquee du modele). Supplements (CPC/CPE, code complement RS/TMC/ZEL/...) reclasses en postes ERP via la table Categories. Tracking JAMAIS converti en nombre. Reconciliation PDF : somme des postes + surcharge carburant (taux officiel) = TOTAL GENERAL.",
   inputs: [
     // .xlsb accepte en plus de .xlsx/.csv : le fichier recu en juillet 2026 etait au format
     // binaire Excel (.xlsb), pas .xlsx -- deja gere par le carrier (XLSX.readFile le lit
     // nativement) et le finaliseur (conversion via Excel COM, cf. memoire tnt_carrier_construit.md).
-    { key: 'facture', label: 'Facture TNT reçue (xlsx/xlsb, feuille DET_FAC)', accept: '.xlsx,.xlsb,.csv', multiple: false, required: true },
+    // FACMAG.CSV (export CSV TNT, 2026-11-10) accepte aussi : converti au format detail facture
+    // (cf. convertirFacmag).
+    { key: 'facture', label: 'Facture TNT reçue (détail facture Excel, feuille DET_FAC, ou FACMAG.CSV)', accept: '.xlsx,.xlsb,.csv', multiple: false, required: true },
     { key: 'pdf', label: 'Facture(s) PDF TNT (contrôle du total et du taux officiel)', accept: '.pdf', multiple: true, required: false },
   ],
   outputNaming: { workbook: '{period}_Facture TNT', import: '{period}_TNT_Import' },
