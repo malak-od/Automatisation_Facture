@@ -19,6 +19,11 @@ tmp_*.xlsx
 ~$*.docx
 ~$*.xlsx
 
+# Dossiers de fichiers reels deposes pour tester en local (factures TNT/FedEx,
+# exports d'expeditions avec noms et adresses clients) -- jamais a committer.
+data_test/
+facturation-app/test/
+
 # Donnees reelles (factures PDF, exports/classeurs de test) sous Transporteurs/ --
 # PAS Documentation/ (guides/docs metier, legitimes a versionner). Les classeurs
 # "modele de reference" (ex. Transporteurs/DPD/2026_06_Facture DPD.xlsx) restent
